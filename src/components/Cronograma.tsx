@@ -290,66 +290,96 @@ export function Cronograma({
   };
 
   const handleCheckin = (id: string) => {
-    const tarefa = tarefas.find(t => t.id === id);
-    if (!tarefa) return;
+    try {
+      const tarefa = tarefas.find(t => t.id === id);
+      if (!tarefa) return;
 
-    const fotos = fotoCheckin ? [...tarefa.fotosExecucao, fotoCheckin] : tarefa.fotosExecucao;
-    const finalDataCheck = dataCheckin || new Date().toISOString().split('T')[0];
-    
-    // Marcar também todas as sub-tarefas como concluídas ao fazer check-in da tarefa
-    const subtarefasAtualizadas = (tarefa.subtarefas || []).map(st => ({
-      ...st,
-      concluida: true,
-      dataConclusao: st.dataConclusao || finalDataCheck
-    }));
+      const fotosAtuais = Array.isArray(tarefa.fotosExecucao) ? tarefa.fotosExecucao : [];
+      const fotos = (fotoCheckin && typeof fotoCheckin === 'string' && fotoCheckin.trim()) 
+        ? [...fotosAtuais, fotoCheckin] 
+        : fotosAtuais;
+      const finalDataCheck = dataCheckin || new Date().toISOString().split('T')[0];
+      
+      // Marcar também todas as sub-tarefas como concluídas ao fazer check-in da tarefa
+      const subtarefasAtualizadas = (tarefa.subtarefas || []).map(st => ({
+        ...st,
+        concluida: true,
+        iniciada: true,
+        dataInicioReal: st.dataInicioReal || st.dataInicioPrevista || finalDataCheck,
+        dataConclusao: st.dataConclusao || finalDataCheck,
+        fotosExecucao: Array.isArray(st.fotosExecucao) ? st.fotosExecucao : []
+      }));
 
-    onUpdateTarefa(id, {
-      status: 'CONCLUIDA',
-      dataConclusao: finalDataCheck,
-      fotosExecucao: fotos,
-      subtarefas: subtarefasAtualizadas
-    });
-    setTarefaSelecionadaCheckin(null);
-    setFotoCheckin('');
-    setDataCheckin(new Date().toISOString().split('T')[0]);
+      onUpdateTarefa(id, {
+        status: 'CONCLUIDA',
+        iniciada: true,
+        dataInicioReal: tarefa.dataInicioReal || tarefa.dataInicioPrevista || finalDataCheck,
+        dataConclusao: finalDataCheck,
+        fotosExecucao: fotos,
+        subtarefas: subtarefasAtualizadas
+      });
+      setTarefaSelecionadaCheckin(null);
+      setFotoCheckin('');
+      setDataCheckin(new Date().toISOString().split('T')[0]);
+    } catch (err) {
+      console.error("Erro ao realizar check-in da tarefa:", err);
+      alert("Ocorreu um erro ao finalizar a etapa com foto. Por favor, tente novamente.");
+    }
   };
 
   // Concluir subtarefa individual com registro de data do check e foto opcional
   const handleConcluirSubtarefa = (tarefa: Tarefa, subId: string, dataConclusao?: string, foto?: string) => {
-    const subtarefas = tarefa.subtarefas || [];
-    const hojeStr = new Date().toISOString().split('T')[0];
-    const dataFinal = dataConclusao || hojeStr;
+    try {
+      const tarefaAtual = tarefas.find(t => t.id === tarefa.id) || tarefa;
+      const subtarefas = tarefaAtual.subtarefas || [];
+      const hojeStr = new Date().toISOString().split('T')[0];
+      const dataFinal = dataConclusao || hojeStr;
 
-    const atualizadas = subtarefas.map(st => {
-      if (st.id === subId) {
-        const fotosAtuais = st.fotosExecucao || [];
-        const novasFotos = foto ? [...fotosAtuais, foto] : fotosAtuais;
-        return { 
-          ...st, 
-          concluida: true, 
-          dataConclusao: dataFinal,
-          fotosExecucao: novasFotos
+      const atualizadas = subtarefas.map(st => {
+        if (st.id === subId) {
+          const fotosAtuais = Array.isArray(st.fotosExecucao) ? st.fotosExecucao : [];
+          const novasFotos = (foto && typeof foto === 'string' && foto.trim()) 
+            ? [...fotosAtuais, foto] 
+            : fotosAtuais;
+          return { 
+            ...st, 
+            concluida: true, 
+            iniciada: true,
+            dataInicioReal: st.dataInicioReal || st.dataInicioPrevista || dataFinal,
+            dataConclusao: dataFinal,
+            fotosExecucao: novasFotos
+          };
+        }
+        return {
+          ...st,
+          fotosExecucao: Array.isArray(st.fotosExecucao) ? st.fotosExecucao : []
         };
+      });
+
+      const updates: Partial<Tarefa> = { 
+        subtarefas: atualizadas,
+        iniciada: true,
+        dataInicioReal: tarefaAtual.dataInicioReal || tarefaAtual.dataInicioPrevista || dataFinal
+      };
+      
+      // Se todas as sub-tarefas forem concluídas, marcar a tarefa principal também
+      if (atualizadas.length > 0 && atualizadas.every(s => s.concluida) && tarefaAtual.status !== 'CONCLUIDA') {
+        updates.status = 'CONCLUIDA';
+        updates.dataConclusao = dataFinal;
       }
-      return st;
-    });
 
-    const updates: Partial<Tarefa> = { subtarefas: atualizadas };
-    
-    // Se todas as sub-tarefas forem concluídas, marcar a tarefa principal também
-    if (atualizadas.length > 0 && atualizadas.every(s => s.concluida) && tarefa.status !== 'CONCLUIDA') {
-      updates.status = 'CONCLUIDA';
-      updates.dataConclusao = dataFinal;
+      onUpdateTarefa(tarefaAtual.id, updates);
+
+      // Se estiver aberta no modal de edição da tarefa, atualizar o estado local
+      if (tarefaEmEdicao && tarefaEmEdicao.id === tarefaAtual.id) {
+        setTarefaEmEdicao({ ...tarefaEmEdicao, ...updates });
+      }
+
+      setSubtarefaParaCheckin(null);
+    } catch (err) {
+      console.error("Erro ao concluir subtarefa:", err);
+      alert("Ocorreu um erro ao registrar a conclusão da subtarefa.");
     }
-
-    onUpdateTarefa(tarefa.id, updates);
-
-    // Se estiver aberta no modal de edição da tarefa, atualizar o estado local
-    if (tarefaEmEdicao && tarefaEmEdicao.id === tarefa.id) {
-      setTarefaEmEdicao({ ...tarefaEmEdicao, ...updates });
-    }
-
-    setSubtarefaParaCheckin(null);
   };
 
   // Salvar alterações de uma subtarefa (título, status, data de conclusão e fotos)
@@ -357,37 +387,48 @@ export function Cronograma({
     e.preventDefault();
     if (!subtarefaEmEdicao) return;
 
-    const { tarefa, subtarefa, titulo, concluida, dataConclusao, fotosExecucao } = subtarefaEmEdicao;
-    const hojeStr = new Date().toISOString().split('T')[0];
-    const subtarefas = tarefa.subtarefas || [];
+    try {
+      const { tarefa, subtarefa, titulo, concluida, dataConclusao, fotosExecucao } = subtarefaEmEdicao;
+      const tarefaAtual = tarefas.find(t => t.id === tarefa.id) || tarefa;
+      const hojeStr = new Date().toISOString().split('T')[0];
+      const subtarefas = tarefaAtual.subtarefas || [];
 
-    const atualizadas = subtarefas.map(st => {
-      if (st.id === subtarefa.id) {
+      const atualizadas = subtarefas.map(st => {
+        if (st.id === subtarefa.id) {
+          return {
+            ...st,
+            titulo: titulo.trim() || st.titulo,
+            concluida,
+            iniciada: concluida ? true : st.iniciada,
+            dataInicioReal: concluida ? (st.dataInicioReal || st.dataInicioPrevista || hojeStr) : st.dataInicioReal,
+            dataConclusao: concluida ? (dataConclusao || st.dataConclusao || hojeStr) : undefined,
+            fotosExecucao: Array.isArray(fotosExecucao) ? fotosExecucao : []
+          };
+        }
         return {
           ...st,
-          titulo: titulo.trim() || st.titulo,
-          concluida,
-          dataConclusao: concluida ? (dataConclusao || st.dataConclusao || hojeStr) : undefined,
-          fotosExecucao: fotosExecucao || []
+          fotosExecucao: Array.isArray(st.fotosExecucao) ? st.fotosExecucao : []
         };
+      });
+
+      const updates: Partial<Tarefa> = { subtarefas: atualizadas };
+
+      if (concluida && atualizadas.length > 0 && atualizadas.every(s => s.concluida) && tarefaAtual.status !== 'CONCLUIDA') {
+        updates.status = 'CONCLUIDA';
+        updates.dataConclusao = dataConclusao || hojeStr;
       }
-      return st;
-    });
 
-    const updates: Partial<Tarefa> = { subtarefas: atualizadas };
+      onUpdateTarefa(tarefaAtual.id, updates);
 
-    if (concluida && atualizadas.length > 0 && atualizadas.every(s => s.concluida) && tarefa.status !== 'CONCLUIDA') {
-      updates.status = 'CONCLUIDA';
-      updates.dataConclusao = dataConclusao || hojeStr;
+      if (tarefaEmEdicao && tarefaEmEdicao.id === tarefaAtual.id) {
+        setTarefaEmEdicao({ ...tarefaEmEdicao, ...updates });
+      }
+
+      setSubtarefaEmEdicao(null);
+    } catch (err) {
+      console.error("Erro ao salvar edição da subtarefa:", err);
+      alert("Ocorreu um erro ao salvar as alterações da subtarefa.");
     }
-
-    onUpdateTarefa(tarefa.id, updates);
-
-    if (tarefaEmEdicao && tarefaEmEdicao.id === tarefa.id) {
-      setTarefaEmEdicao({ ...tarefaEmEdicao, ...updates });
-    }
-
-    setSubtarefaEmEdicao(null);
   };
 
   // Solicitar confirmação com "estou ciente" para desfazer check de subtarefa
@@ -2128,8 +2169,8 @@ export function Cronograma({
 
       {/* Modal de Edição de Sub-tarefa (com fotos de comprovação) */}
       {subtarefaEmEdicao && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs justify-center p-4 z-50">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[80vh]">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[85vh]">
             <div className="p-4 bg-indigo-600 text-white flex justify-between items-center">
               <h3 className="font-bold text-base flex items-center gap-2">
                 <Pencil className="w-4 h-4" />
@@ -2233,7 +2274,7 @@ export function Cronograma({
                         <button
                           type="button"
                           onClick={() => {
-                            const novas = subtarefaEmEdicao.fotosExecucao.filter((_, i) => i !== idx);
+                            const novas = (subtarefaEmEdicao.fotosExecucao || []).filter((_, i) => i !== idx);
                             setSubtarefaEmEdicao({ ...subtarefaEmEdicao, fotosExecucao: novas });
                           }}
                           className="absolute -top-1.5 -right-1.5 bg-rose-600 hover:bg-rose-700 text-white p-0.5 rounded-full shadow-xs cursor-pointer"

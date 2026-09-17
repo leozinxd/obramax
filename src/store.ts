@@ -470,6 +470,7 @@ export function useStore() {
 
             return {
               ...t,
+              fotosExecucao: Array.isArray(t.fotosExecucao) ? t.fotosExecucao : [],
               dataInicioPrevista,
               iniciada,
               dataInicioReal,
@@ -525,7 +526,24 @@ export function useStore() {
   });
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (err) {
+      console.warn("Aviso ao salvar no localStorage (cota de armazenamento atingida):", err);
+      try {
+        // Se a cota do navegador for ultrapassada, salva versão otimizada
+        const backupState: AppState = {
+          ...state,
+          diarioObra: state.diarioObra.map(d => ({
+            ...d,
+            fotosDia: (d.fotosDia || []).slice(-4)
+          }))
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(backupState));
+      } catch (innerErr) {
+        console.error("Não foi possível persistir no localStorage:", innerErr);
+      }
+    }
   }, [state]);
 
   const setObraAtiva = useCallback((id: string) => {
@@ -962,11 +980,69 @@ export function generateId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
-export function fileToBase64(file: File): Promise<string> {
+export function fileToBase64(file: File, maxDim = 1200, quality = 0.75): Promise<string> {
   return new Promise((resolve, reject) => {
+    // Se não for imagem (ou navegador sem suporte a Image), lê diretamente como DataURL
+    if (!file.type || !file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+      reader.readAsDataURL(file);
+      return;
+    }
+
     const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result as string);
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      if (!dataUrl) {
+        resolve('');
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let width = img.naturalWidth || img.width;
+          let height = img.naturalHeight || img.height;
+
+          // Se a imagem exceder as dimensões máximas, redimensiona proporcionalmente
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, width);
+          canvas.height = Math.max(1, height);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          // Gera JPEG com compressão inteligente (reduz de ~8MB para ~80KB mantendo alta nitidez)
+          const compressed = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressed);
+        } catch (canvasErr) {
+          console.warn("Compressão por canvas falhou, usando dataUrl original:", canvasErr);
+          resolve(dataUrl);
+        }
+      };
+
+      img.onerror = () => {
+        resolve(dataUrl);
+      };
+
+      img.src = dataUrl;
+    };
+
     reader.onerror = error => reject(error);
+    reader.readAsDataURL(file);
   });
 }
