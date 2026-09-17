@@ -6,6 +6,25 @@ export type TicketStatus = 'ABERTO' | 'ACEITO' | 'RECUSADO';
 export type CategoriaDespesa = 'Material' | 'Serviço' | 'Transporte' | 'Alimentação';
 export const CATEGORIAS_DESPESA: CategoriaDespesa[] = ['Material', 'Serviço', 'Transporte', 'Alimentação'];
 
+export type CategoriaEtapa = 
+  | 'Serviços preliminares'
+  | 'Demolição'
+  | 'Infraestrutura'
+  | 'Superestrutura'
+  | 'Alvenaria'
+  | 'Cobertura'
+  | 'Instalações'
+  | 'Instalações elétricas'
+  | 'Instalações hidráulicas'
+  | 'Instalações sanitárias'
+  | 'Instalações complementares'
+  | 'Revestimentos'
+  | 'Pintura'
+  | 'Forro'
+  | 'Pisos'
+  | 'Limpeza'
+  | string;
+
 export interface ItemDespesa {
   id: string;
   item: string;
@@ -17,6 +36,7 @@ export interface ItemDespesa {
 export interface SubTarefa {
   id: string;
   titulo: string;
+  categoria?: CategoriaEtapa;
   dataInicioPrevista?: string;
   dataFimPrevista?: string;
   duracaoDias?: number;
@@ -39,6 +59,7 @@ export interface Tarefa {
   id: string;
   obraId: string;
   titulo: string;
+  categoria?: CategoriaEtapa;
   dataInicioPrevista: string;
   dataFimPrevista: string;
   duracaoDias: number;

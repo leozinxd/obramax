@@ -25,6 +25,7 @@ import {
   Undo2,
   Check,
   Sparkles,
+  Plus,
   FileCheck2
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
@@ -499,9 +500,9 @@ export function DiarioObra({
         {!showNovo && !diarioEmEdicao && (
           <button 
             onClick={() => setShowNovo(true)}
-            className="shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition-all cursor-pointer"
+            className="shrink-0 flex items-center bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition-all cursor-pointer"
           >
-            + Novo RDO
+            <Plus className="w-4 h-4" /> Novo RDO
           </button>
         )}
       </div>

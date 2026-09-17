@@ -35,6 +35,7 @@ export default function App() {
     deleteTicket 
   } = useStore();
   const [activeTab, setActiveTab] = useState<Tab>('DASHBOARD');
+  const [filtroCategoriaCronograma, setFiltroCategoriaCronograma] = useState<string>('TODAS');
 
   const navItems = [
     { id: 'DASHBOARD', icon: LayoutDashboard, label: 'Início' },
@@ -55,7 +56,10 @@ export default function App() {
             <Dashboard 
               state={state} 
               onNavigateFinanceiro={() => setActiveTab('FINANCEIRO')} 
-              onNavigateCronograma={() => setActiveTab('CRONOGRAMA')}
+              onNavigateCronograma={(catId?: string) => {
+                if (catId) setFiltroCategoriaCronograma(catId);
+                setActiveTab('CRONOGRAMA');
+              }}
               onNavigateDiario={() => setActiveTab('DIARIO')}
               onConfirmarRdo={confirmarRdo}
               onUpdateDiario={updateDiario}
@@ -74,7 +78,15 @@ export default function App() {
               onDeletePagamento={deletePagamento}
             />
           )}
-          {activeTab === 'CRONOGRAMA' && <Cronograma state={state} onAddTarefa={addTarefa} onUpdateTarefa={updateTarefa} onDeleteTarefa={deleteTarefa} />}
+          {activeTab === 'CRONOGRAMA' && (
+            <Cronograma 
+              state={state} 
+              filtroInicial={filtroCategoriaCronograma}
+              onAddTarefa={addTarefa} 
+              onUpdateTarefa={updateTarefa} 
+              onDeleteTarefa={deleteTarefa} 
+            />
+          )}
           {activeTab === 'DIARIO' && (
             <DiarioObra 
               state={state} 

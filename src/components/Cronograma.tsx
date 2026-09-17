@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AppState, generateId } from '../store';
 import { Tarefa, SubTarefa, TarefaStatus } from '../types';
 import { 
@@ -26,14 +26,21 @@ import {
   Calendar,
   BellRing,
   CalendarClock,
-  Check
+  Check,
+  Tag,
+  Filter,
+  Search,
+  Sparkles,
+  Layers
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { ModalConfirmacaoCiente } from './ModalConfirmacaoCiente';
 import { calcularDuracaoDias, formatarDataBR, obterAlertaInicio, InfoAlertaInicio } from '../utils';
+import { CATEGORIAS_ETAPAS, getInfoCategoria, sugerirCategoriaPorTitulo } from '../constants/categorias';
 
 interface CronogramaProps {
   state: AppState;
+  filtroInicial?: string;
   onUpdateTarefa: (id: string, updates: Partial<Tarefa>) => void;
   onAddTarefa: (tarefa: Tarefa) => void;
   onDeleteTarefa: (id: string) => void;
@@ -57,6 +64,7 @@ interface ModalConfirmacaoData {
 interface SubtarefaDraft {
   id: string;
   titulo: string;
+  categoria?: string;
   dataInicioPrevista: string;
   dataFimPrevista: string;
   duracaoDias: number;
@@ -64,6 +72,7 @@ interface SubtarefaDraft {
 
 export function Cronograma({ 
   state, 
+  filtroInicial,
   onUpdateTarefa, 
   onAddTarefa, 
   onDeleteTarefa,
@@ -73,6 +82,8 @@ export function Cronograma({
   onDesfazerInicioSubtarefa
 }: CronogramaProps) {
   const [showNovaTarefa, setShowNovaTarefa] = useState(false);
+  const [categoriaFiltro, setCategoriaFiltro] = useState<string>(filtroInicial || 'TODAS');
+  const [buscaFiltro, setBuscaFiltro] = useState<string>('');
   const [tarefaSelecionadaCheckin, setTarefaSelecionadaCheckin] = useState<string | null>(null);
   const [fotoCheckin, setFotoCheckin] = useState('');
   const [dataCheckin, setDataCheckin] = useState(new Date().toISOString().split('T')[0]);
@@ -100,6 +111,7 @@ export function Cronograma({
     tarefa: Tarefa;
     subtarefa: SubTarefa;
     titulo: string;
+    categoria?: string;
     concluida: boolean;
     dataConclusao?: string;
     fotosExecucao: string[];
@@ -167,24 +179,74 @@ export function Cronograma({
   const fimSugeridoStr = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
 
   const [titulo, setTitulo] = useState('');
+  const [categoriaNova, setCategoriaNova] = useState<string>('Serviços preliminares');
+  const [categoriaEditadaManualmente, setCategoriaEditadaManualmente] = useState(false);
   const [dataInicioNova, setDataInicioNova] = useState(hojeStr);
   const [dataFimNova, setDataFimNova] = useState(fimSugeridoStr);
   const [subtarefasNova, setSubtarefasNova] = useState<SubtarefaDraft[]>([]);
   const [inputSubtarefaNova, setInputSubtarefaNova] = useState('');
+  const [subCategoriaNova, setSubCategoriaNova] = useState<string>('');
   const [subDataInicioNova, setSubDataInicioNova] = useState(hojeStr);
   const [subDataFimNova, setSubDataFimNova] = useState(fimSugeridoStr);
 
   // Duração calculada em tempo real para a nova tarefa
   const duracaoCalculadaNova = calcularDuracaoDias(dataInicioNova, dataFimNova);
 
+  // Contagem de tarefas por categoria para o filtro
+  const contagemPorCategoria = useMemo(() => {
+    const counts: { [cat: string]: number } = {};
+    tarefas.forEach(t => {
+      const cat = t.categoria || sugerirCategoriaPorTitulo(t.titulo);
+      counts[cat] = (counts[cat] || 0) + 1;
+      // Se for subcategoria de Instalações, contabilizar também no grupo geral 7. Instalações
+      if (cat.startsWith('Instalações') && cat !== 'Instalações') {
+        counts['Instalações'] = (counts['Instalações'] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [tarefas]);
+
+  // Lista filtrada de tarefas
+  const tarefasFiltradas = useMemo(() => {
+    return tarefas.filter(t => {
+      const catTarefa = t.categoria || sugerirCategoriaPorTitulo(t.titulo);
+
+      // Filtro por Categoria
+      if (categoriaFiltro !== 'TODAS') {
+        const matchTarefa = categoriaFiltro === 'Instalações' 
+          ? catTarefa.startsWith('Instalações')
+          : catTarefa === categoriaFiltro;
+        const matchSub = (t.subtarefas || []).some(st => {
+          const catSub = st.categoria || catTarefa;
+          return categoriaFiltro === 'Instalações' ? catSub.startsWith('Instalações') : catSub === categoriaFiltro;
+        });
+        if (!matchTarefa && !matchSub) return false;
+      }
+
+      // Filtro por Busca Textual
+      if (buscaFiltro.trim()) {
+        const q = buscaFiltro.toLowerCase().trim();
+        const infoCat = getInfoCategoria(catTarefa);
+        const matchNome = t.titulo.toLowerCase().includes(q);
+        const matchCat = catTarefa.toLowerCase().includes(q) || infoCat.nome.toLowerCase().includes(q);
+        const matchSubs = (t.subtarefas || []).some(st => st.titulo.toLowerCase().includes(q));
+        if (!matchNome && !matchCat && !matchSubs) return false;
+      }
+
+      return true;
+    });
+  }, [tarefas, categoriaFiltro, buscaFiltro]);
+
   const handleAdicionarSubtarefaNova = () => {
     if (!inputSubtarefaNova.trim()) return;
     const duracaoSub = calcularDuracaoDias(subDataInicioNova, subDataFimNova);
+    const catSub = subCategoriaNova || categoriaNova || sugerirCategoriaPorTitulo(inputSubtarefaNova.trim());
     setSubtarefasNova(prev => [
       ...prev,
       {
         id: generateId(),
         titulo: inputSubtarefaNova.trim(),
+        categoria: catSub,
         dataInicioPrevista: subDataInicioNova,
         dataFimPrevista: subDataFimNova,
         duracaoDias: duracaoSub
@@ -202,10 +264,12 @@ export function Cronograma({
     if (!titulo.trim()) return;
 
     const duracaoFinal = calcularDuracaoDias(dataInicioNova, dataFimNova);
+    const categoriaFinal = categoriaNova || sugerirCategoriaPorTitulo(titulo.trim());
 
     const subTarefasObj: SubTarefa[] = subtarefasNova.map(sub => ({
       id: sub.id || generateId(),
       titulo: sub.titulo,
+      categoria: sub.categoria || categoriaFinal,
       dataInicioPrevista: sub.dataInicioPrevista || dataInicioNova,
       dataFimPrevista: sub.dataFimPrevista || dataFimNova,
       duracaoDias: sub.duracaoDias || duracaoFinal,
@@ -217,6 +281,7 @@ export function Cronograma({
       id: generateId(),
       obraId,
       titulo: titulo.trim(),
+      categoria: categoriaFinal,
       dataInicioPrevista: dataInicioNova,
       dataFimPrevista: dataFimNova,
       duracaoDias: duracaoFinal,
@@ -228,10 +293,13 @@ export function Cronograma({
 
     setShowNovaTarefa(false);
     setTitulo('');
+    setCategoriaNova('Serviços preliminares');
+    setCategoriaEditadaManualmente(false);
     setDataInicioNova(hojeStr);
     setDataFimNova(fimSugeridoStr);
     setSubtarefasNova([]);
     setInputSubtarefaNova('');
+    setSubCategoriaNova('');
     setSubDataInicioNova(hojeStr);
     setSubDataFimNova(fimSugeridoStr);
   };
@@ -382,13 +450,13 @@ export function Cronograma({
     }
   };
 
-  // Salvar alterações de uma subtarefa (título, status, data de conclusão e fotos)
+  // Salvar alterações de uma subtarefa (título, categoria, status, data de conclusão e fotos)
   const handleSalvarEdicaoSubtarefa = (e: React.FormEvent) => {
     e.preventDefault();
     if (!subtarefaEmEdicao) return;
 
     try {
-      const { tarefa, subtarefa, titulo, concluida, dataConclusao, fotosExecucao } = subtarefaEmEdicao;
+      const { tarefa, subtarefa, titulo, categoria, concluida, dataConclusao, fotosExecucao } = subtarefaEmEdicao;
       const tarefaAtual = tarefas.find(t => t.id === tarefa.id) || tarefa;
       const hojeStr = new Date().toISOString().split('T')[0];
       const subtarefas = tarefaAtual.subtarefas || [];
@@ -398,6 +466,7 @@ export function Cronograma({
           return {
             ...st,
             titulo: titulo.trim() || st.titulo,
+            categoria: categoria || st.categoria || tarefaAtual.categoria || sugerirCategoriaPorTitulo(titulo),
             concluida,
             iniciada: concluida ? true : st.iniciada,
             dataInicioReal: concluida ? (st.dataInicioReal || st.dataInicioPrevista || hojeStr) : st.dataInicioReal,
@@ -637,6 +706,7 @@ export function Cronograma({
     const hojeStr = new Date().toISOString().split('T')[0];
     const updates: Partial<Tarefa> = {
       titulo: tarefaEmEdicao.titulo.trim(),
+      categoria: tarefaEmEdicao.categoria || sugerirCategoriaPorTitulo(tarefaEmEdicao.titulo),
       dataInicioPrevista: tarefaEmEdicao.dataInicioPrevista,
       dataFimPrevista: tarefaEmEdicao.dataFimPrevista,
       duracaoDias: duracaoCalculada,
@@ -706,9 +776,48 @@ export function Cronograma({
               type="text" 
               placeholder="Ex: Alvenaria do 1º Pavimento"
               value={titulo} 
-              onChange={e => setTitulo(e.target.value)} 
+              onChange={e => {
+                const novoTitulo = e.target.value;
+                setTitulo(novoTitulo);
+                if (!categoriaEditadaManualmente && novoTitulo.trim().length >= 3) {
+                  setCategoriaNova(sugerirCategoriaPorTitulo(novoTitulo));
+                }
+              }} 
               className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" 
             />
+          </div>
+
+          {/* Seletor de Categoria */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Tag className="w-3.5 h-3.5 text-indigo-400" />
+                Categoria da Etapa *
+              </span>
+              <span className="text-[10px] text-slate-400 font-normal">
+                {categoriaEditadaManualmente ? 'Manual' : 'Sugestão automática ativa'}
+              </span>
+            </label>
+            <select
+              value={categoriaNova}
+              onChange={e => {
+                setCategoriaNova(e.target.value);
+                setCategoriaEditadaManualmente(true);
+              }}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              {CATEGORIAS_ETAPAS.map(cat => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.numero}. {cat.nome}
+                </option>
+              ))}
+            </select>
+            {getInfoCategoria(categoriaNova) && (
+              <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
+                {getInfoCategoria(categoriaNova).descricao}
+              </p>
+            )}
           </div>
 
           {/* Início Previsto e Fim Previsto */}
@@ -804,7 +913,7 @@ export function Cronograma({
                   onClick={handleAdicionarSubtarefaNova}
                   className="bg-indigo-600 hover:bg-indigo-500 px-3.5 py-2 rounded-xl text-xs font-semibold text-white transition-colors cursor-pointer"
                 >
-                  + Adicionar
+                  <Plus/>
                 </button>
               </div>
 
@@ -923,48 +1032,199 @@ export function Cronograma({
         </div>
       )}
 
-      {/* Barra de Ações Rápidas: Contagem de Tarefas & Botões de Expandir/Recolher */}
+      {/* Barra de Filtros por Categoria e Ações Rápidas */}
       {tarefas.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-            <ListChecks className="w-4 h-4 text-indigo-600" />
-            <span>{tarefas.length} {tarefas.length === 1 ? 'etapa cadastrada' : 'etapas cadastradas'}</span>
-            <span className="text-slate-300">|</span>
-            <span className="text-slate-500 font-normal">
-              {tarefas.filter(t => t.status === 'CONCLUIDA').length} concluídas
-            </span>
+        <div className="space-y-3 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+          {/* Linha Superior: Busca e Contadores */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+              <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                <Filter className="w-4 h-4" />
+              </div>
+              <div>
+                <span>Filtrar Cronograma por Categoria</span>
+                <span className="text-[11px] text-slate-400 font-normal block">
+                  Mostrando {tarefasFiltradas.length} de {tarefas.length} etapas
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Campo de Busca Rápida */}
+              <div className="relative flex-1 sm:w-48">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar etapas..."
+                  value={buscaFiltro}
+                  onChange={e => setBuscaFiltro(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                {buscaFiltro && (
+                  <button 
+                    onClick={() => setBuscaFiltro('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Botões de Expandir/Recolher */}
+              <button
+                type="button"
+                onClick={handleColapsarTodas}
+                className="text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer shrink-0"
+                title="Recolher todas"
+              >
+                <ChevronsDownUp className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleExpandirTodas}
+                className="text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer shrink-0"
+                title="Expandir todas"
+              >
+                <ChevronsUpDown className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          {/* Pílulas de Categorias com Rolagem Horizontal Suave */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
+            {/* Pílula: Todas */}
             <button
               type="button"
-              onClick={handleColapsarTodas}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer active:scale-95"
-              title="Recolher todas as tarefas para visualização compacta"
+              onClick={() => setCategoriaFiltro('TODAS')}
+              className={`text-xs px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                categoriaFiltro === 'TODAS'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
             >
-              <ChevronsDownUp className="w-3.5 h-3.5 text-slate-500" />
-              Recolher todas
+              <span>Todas as Categorias</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                categoriaFiltro === 'TODAS' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {tarefas.length}
+              </span>
             </button>
-            <button
-              type="button"
-              onClick={handleExpandirTodas}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer active:scale-95"
-              title="Expandir todas as tarefas com todos os detalhes"
-            >
-              <ChevronsUpDown className="w-3.5 h-3.5 text-indigo-600" />
-              Expandir todas
-            </button>
+
+            {/* Pílulas das Categorias Individuais */}
+            {CATEGORIAS_ETAPAS.map(cat => {
+              const count = contagemPorCategoria[cat.id] || 0;
+              const isActive = categoriaFiltro === cat.id;
+
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setCategoriaFiltro(isActive ? 'TODAS' : cat.id)}
+                  className={`text-xs px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer shrink-0 border ${
+                    isActive
+                      ? `${cat.corBg} ${cat.corTexto} ${cat.corBorda} ring-2 ring-indigo-500 shadow-xs`
+                      : count > 0 
+                      ? 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                      : 'bg-slate-50 text-slate-400 border-slate-200/60 opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  <span className="text-[10px] font-black text-slate-400">{cat.numero}.</span>
+                  <span>{cat.nome}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                    isActive
+                      ? 'bg-white/80 text-slate-800'
+                      : count > 0
+                      ? 'bg-slate-100 text-slate-700'
+                      : 'bg-slate-100 text-slate-400'
+                  }`}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
+
+          {/* Banner Indicador de Filtro Ativo */}
+          {(categoriaFiltro !== 'TODAS' || buscaFiltro) && (
+            <div className="flex items-center justify-between bg-indigo-50/70 border border-indigo-200/80 px-3 py-2 rounded-xl text-xs text-indigo-950 animate-in fade-in duration-200">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-indigo-900">Filtro Ativo:</span>
+                {categoriaFiltro !== 'TODAS' && (
+                  <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md border text-[11px] ${getInfoCategoria(categoriaFiltro).corBadge}`}>
+                    <Tag className="w-3 h-3" />
+                    {getInfoCategoria(categoriaFiltro).numero}. {getInfoCategoria(categoriaFiltro).nome}
+                  </span>
+                )}
+                {buscaFiltro && (
+                  <span className="bg-white border border-indigo-200 px-2 py-0.5 rounded-md text-[11px] font-semibold text-slate-700">
+                    Termo: "{buscaFiltro}"
+                  </span>
+                )}
+                <span className="text-indigo-700 font-medium text-[11px]">
+                  ({tarefasFiltradas.length} {tarefasFiltradas.length === 1 ? 'etapa encontrada' : 'etapas encontradas'})
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCategoriaFiltro('TODAS');
+                  setBuscaFiltro('');
+                }}
+                className="text-xs font-bold text-indigo-700 hover:text-indigo-900 hover:underline flex items-center gap-1 cursor-pointer shrink-0 ml-2"
+              >
+                <X className="w-3.5 h-3.5" />
+                Limpar Filtros
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {/* Timeline de Tarefas */}
-      <div className="relative pl-6 border-l-2 border-slate-200 space-y-4 mt-4">
-        {tarefas.map(tarefa => {
-          const isConcluida = tarefa.status === 'CONCLUIDA';
-          const isAtrasada = !isConcluida && new Date(tarefa.dataFimPrevista) < new Date();
-          const isCheckinOpen = tarefaSelecionadaCheckin === tarefa.id;
-          const isColapsada = isTarefaColapsada(tarefa.id);
+      {tarefasFiltradas.length === 0 && tarefas.length > 0 ? (
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto">
+            <Filter className="w-6 h-6" />
+          </div>
+          <h3 className="font-bold text-base text-slate-800">Nenhuma etapa encontrada</h3>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            Não há etapas cadastradas para o filtro selecionado ({categoriaFiltro !== 'TODAS' ? getInfoCategoria(categoriaFiltro).nome : 'termo de busca'}).
+          </p>
+          <div className="flex items-center justify-center gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setCategoriaFiltro('TODAS');
+                setBuscaFiltro('');
+              }}
+              className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-4 py-2 rounded-xl transition-colors cursor-pointer"
+            >
+              Ver Todas as Etapas
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (categoriaFiltro !== 'TODAS') {
+                  setCategoriaNova(categoriaFiltro);
+                  setCategoriaEditadaManualmente(true);
+                }
+                setShowNovaTarefa(true);
+              }}
+              className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-xl transition-colors cursor-pointer"
+            >
+              + Adicionar nesta Categoria
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="relative pl-6 border-l-2 border-slate-200 space-y-4 mt-4">
+          {tarefasFiltradas.map(tarefa => {
+            const isConcluida = tarefa.status === 'CONCLUIDA';
+            const isAtrasada = !isConcluida && new Date(tarefa.dataFimPrevista) < new Date();
+            const isCheckinOpen = tarefaSelecionadaCheckin === tarefa.id;
+            const isColapsada = isTarefaColapsada(tarefa.id);
+            const catInfo = getInfoCategoria(tarefa.categoria || sugerirCategoriaPorTitulo(tarefa.titulo));
 
           const subtarefas = tarefa.subtarefas || [];
           const totalSubs = subtarefas.length;
@@ -1022,6 +1282,20 @@ export function Cronograma({
                           }`}>
                             {tarefa.titulo}
                           </h3>
+
+                          {/* Badge de Categoria da Etapa */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCategoriaFiltro(catInfo.id);
+                            }}
+                            title={`Filtrar cronograma por ${catInfo.nome}`}
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1 transition-transform hover:scale-105 active:scale-95 cursor-pointer ${catInfo.corBadge}`}
+                          >
+                            <Tag className="w-2.5 h-2.5" />
+                            <span>{catInfo.numero}. {catInfo.nome}</span>
+                          </button>
 
                           {/* Badge de Status Geral */}
                           <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
@@ -1395,33 +1669,57 @@ export function Cronograma({
                             key={sub.id} 
                             className="flex items-center justify-between bg-slate-50 hover:bg-slate-100/80 px-2.5 py-1.5 rounded-lg border border-slate-100 group/sub transition-colors"
                           >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (sub.concluida) {
-                                  solicitarDesfazerCheckSubtarefa(tarefa, sub);
-                                } else {
-                                  const hojeStr = new Date().toISOString().split('T')[0];
-                                  setSubtarefaParaCheckin({
-                                    tarefa,
-                                    subtarefa: sub,
-                                    dataConclusao: hojeStr,
-                                    foto: ''
-                                  });
-                                }
-                              }}
-                              className="flex items-start gap-2 text-left flex-1 min-w-0 cursor-pointer"
-                            >
-                              {sub.concluida ? (
-                                <CheckSquare className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                              ) : (
-                                <Square className="w-4 h-4 text-slate-400 flex-shrink-0 mt-0.5" />
-                              )}
+                            <div className="flex items-start gap-2 flex-1 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (sub.concluida) {
+                                    solicitarDesfazerCheckSubtarefa(tarefa, sub);
+                                  } else {
+                                    const hojeStr = new Date().toISOString().split('T')[0];
+                                    setSubtarefaParaCheckin({
+                                      tarefa,
+                                      subtarefa: sub,
+                                      dataConclusao: hojeStr,
+                                      foto: ''
+                                    });
+                                  }
+                                }}
+                                className="cursor-pointer text-slate-400 hover:text-indigo-600 transition-colors mt-0.5 flex-shrink-0"
+                                title={sub.concluida ? "Desfazer check" : "Marcar como concluída"}
+                              >
+                                {sub.concluida ? (
+                                  <CheckSquare className="w-4 h-4 text-emerald-600" />
+                                ) : (
+                                  <Square className="w-4 h-4 text-slate-400 hover:text-slate-600" />
+                                )}
+                              </button>
+
                               <div className="flex flex-col min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className={`text-xs truncate ${sub.concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                                <div 
+                                  onClick={() => {
+                                    if (sub.concluida) {
+                                      solicitarDesfazerCheckSubtarefa(tarefa, sub);
+                                    } else {
+                                      const hojeStr = new Date().toISOString().split('T')[0];
+                                      setSubtarefaParaCheckin({
+                                        tarefa,
+                                        subtarefa: sub,
+                                        dataConclusao: hojeStr,
+                                        foto: ''
+                                      });
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 flex-wrap cursor-pointer select-none"
+                                >
+                                  <span className={`text-xs truncate ${sub.concluida ? 'line-through text-slate-400' : 'text-slate-700 hover:text-indigo-600'}`}>
                                     {sub.titulo}
                                   </span>
+                                  {sub.categoria && sub.categoria !== tarefa.categoria && (
+                                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${getInfoCategoria(sub.categoria).corBadge}`}>
+                                      {getInfoCategoria(sub.categoria).nome}
+                                    </span>
+                                  )}
                                   {totalGastoSub > 0 && (
                                     <span className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.2 rounded-md">
                                       R$ {totalGastoSub.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -1462,7 +1760,7 @@ export function Cronograma({
                                   </div>
                                 )}
                               </div>
-                            </button>
+                            </div>
                             
                             <div className="flex items-center gap-0.5 flex-shrink-0">
                               <button
@@ -1475,6 +1773,7 @@ export function Cronograma({
                                     tarefa,
                                     subtarefa: sub,
                                     titulo: sub.titulo,
+                                    categoria: sub.categoria || tarefa.categoria,
                                     concluida: sub.concluida,
                                     dataConclusao: sub.dataConclusao || (sub.concluida ? hojeStr : ''),
                                     fotosExecucao: sub.fotosExecucao ? [...sub.fotosExecucao] : []
@@ -1628,22 +1927,23 @@ export function Cronograma({
             )}
           </div>
         </div>
-      );
-    })}
+        );
+      })}
+        </div>
+      )}
 
-        {tarefas.length === 0 && !showNovaTarefa && (
-          <div className="text-center py-12 bg-white rounded-2xl border border-slate-100 p-6">
-            <ListChecks className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-            <p className="text-slate-500 font-medium text-sm">Nenhuma etapa cadastrada no cronograma.</p>
-            <button 
-              onClick={() => setShowNovaTarefa(true)} 
-              className="mt-3 text-indigo-600 font-semibold text-xs hover:underline"
-            >
-              Criar a primeira tarefa
-            </button>
-          </div>
-        )}
-      </div>
+      {tarefas.length === 0 && !showNovaTarefa && (
+        <div className="text-center py-12 bg-white rounded-2xl border border-slate-100 p-6">
+          <ListChecks className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+          <p className="text-slate-500 font-medium text-sm">Nenhuma etapa cadastrada no cronograma.</p>
+          <button 
+            onClick={() => setShowNovaTarefa(true)} 
+            className="mt-3 text-indigo-600 font-semibold text-xs hover:underline"
+          >
+            Criar a primeira tarefa
+          </button>
+        </div>
+      )}
 
       {/* Modal / Diálogo de Edição de Tarefa */}
       {tarefaEmEdicao && (
@@ -1673,6 +1973,28 @@ export function Cronograma({
                   onChange={e => setTarefaEmEdicao({ ...tarefaEmEdicao, titulo: e.target.value })} 
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" 
                 />
+              </div>
+
+              {/* Categoria da Tarefa no Modal de Edição */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-indigo-600" />
+                  Categoria da Etapa
+                </label>
+                <select
+                  value={tarefaEmEdicao.categoria || sugerirCategoriaPorTitulo(tarefaEmEdicao.titulo)}
+                  onChange={e => setTarefaEmEdicao({ ...tarefaEmEdicao, categoria: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                >
+                  {CATEGORIAS_ETAPAS.map(cat => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.numero}. {cat.nome}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {getInfoCategoria(tarefaEmEdicao.categoria || sugerirCategoriaPorTitulo(tarefaEmEdicao.titulo)).descricao}
+                </p>
               </div>
 
               {/* Prazos: Início Previsto e Fim Previsto */}
@@ -1919,7 +2241,7 @@ export function Cronograma({
                     }}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-xl"
                   >
-                    + Adicionar
+                    <Plus/>
                   </button>
                 </div>
               </div>
@@ -2084,7 +2406,7 @@ export function Cronograma({
 
       {/* Modal de Check-in de Sub-tarefa com Foto de Comprovação */}
       {subtarefaParaCheckin && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs justify-center p-4 z-50 animate-in fade-in duration-150">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
             <div className="p-4 bg-emerald-600 text-white flex justify-between items-center">
               <h3 className="font-bold text-base flex items-center gap-2">
@@ -2129,7 +2451,7 @@ export function Cronograma({
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
                   <Camera className="w-3.5 h-3.5 text-emerald-600" />
-                  Foto de Comprovação da Sub-tarefa (opcional)
+                  Foto de Comprovação da Sub-tarefa
                 </label>
                 <ImageUploader
                   label="Tirar foto ou anexar da galeria"
@@ -2169,8 +2491,8 @@ export function Cronograma({
 
       {/* Modal de Edição de Sub-tarefa (com fotos de comprovação) */}
       {subtarefaEmEdicao && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[85vh]">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[80vh]">
             <div className="p-4 bg-indigo-600 text-white flex justify-between items-center">
               <h3 className="font-bold text-base flex items-center gap-2">
                 <Pencil className="w-4 h-4" />
@@ -2208,6 +2530,25 @@ export function Cronograma({
                 />
               </div>
 
+              {/* Categoria da Sub-tarefa */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                  <Tag className="w-3.5 h-3.5 text-indigo-600" />
+                  Categoria da Sub-tarefa
+                </label>
+                <select
+                  value={subtarefaEmEdicao.categoria || subtarefaEmEdicao.subtarefa.categoria || subtarefaEmEdicao.tarefa.categoria || sugerirCategoriaPorTitulo(subtarefaEmEdicao.titulo)}
+                  onChange={e => setSubtarefaEmEdicao({ ...subtarefaEmEdicao, categoria: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                >
+                  {CATEGORIAS_ETAPAS.map(cat => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.numero}. {cat.nome}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -2224,7 +2565,7 @@ export function Cronograma({
                     }}
                     className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4 cursor-pointer"
                   />
-                  <span className="text-xs font-bold text-slate-700">Sub-tarefa Concluída (Check Realizado)</span>
+                  <span className="text-xs font-bold text-slate-700">Sub-tarefa Concluída</span>
                 </label>
 
                 {subtarefaEmEdicao.concluida && (

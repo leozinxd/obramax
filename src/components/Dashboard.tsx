@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AppState, DiarioObra } from '../types';
 import { 
   AlertTriangle, 
@@ -27,14 +27,20 @@ import {
   Check,
   Edit3,
   CalendarDays,
-  ExternalLink
+  ExternalLink,
+  Tag,
+  BarChart3,
+  Filter,
+  Target,
+  Hourglass
 } from 'lucide-react';
 import { ModalEditarRdoConfirmacao } from './ModalEditarRdoConfirmacao';
+import { CATEGORIAS_ETAPAS, getInfoCategoria, sugerirCategoriaPorTitulo } from '../constants/categorias';
 
 interface DashboardProps {
   state: AppState;
   onNavigateFinanceiro?: () => void;
-  onNavigateCronograma?: () => void;
+  onNavigateCronograma?: (categoriaId?: string) => void;
   onNavigateDiario?: (diarioId?: string) => void;
   onConfirmarRdo?: (id: string) => void;
   onUpdateDiario?: (
@@ -54,6 +60,13 @@ export function Dashboard({
 }: DashboardProps) {
   const obraId = state.obraAtivaId;
   const [apenasComGastos, setApenasComGastos] = useState(false);
+  const [modoAnaliseEtapas, setModoAnaliseEtapas] = useState<'GASTOS' | 'DURACAO' | 'PROGRESSO'>('GASTOS');
+  const [apenasCategoriasComAtividades, setApenasCategoriasComAtividades] = useState(true);
+  const [mostrarDetalhesEtapas, setMostrarDetalhesEtapas] = useState(false);
+  const [mostrarDetalhesTarefas, setMostrarDetalhesTarefas] = useState(false);
+  const [tipoAgrupamentoPizza, setTipoAgrupamentoPizza] = useState<'TIPO' | 'ETAPA'>('TIPO');
+  const [categoriaPizzaHover, setCategoriaPizzaHover] = useState<string | null>(null);
+  const [filtroCategoriaRelatorio, setFiltroCategoriaRelatorio] = useState<string>('TODAS');
   const [etapasExpandidas, setEtapasExpandidas] = useState<{ [tarefaId: string]: boolean }>({});
   const [diarioParaEditar, setDiarioParaEditar] = useState<DiarioObra | null>(null);
   const [modalEditarRdoAberto, setModalEditarRdoAberto] = useState(false);
@@ -189,10 +202,199 @@ export function Dashboard({
     };
   });
 
-  // Filtragem de tarefas para o relatório
-  const tarefasFiltradas = apenasComGastos 
-    ? relatorioTarefas.filter(t => t.totalGasto > 0 || t.totalPrevisaoTarefa > 0) 
-    : relatorioTarefas;
+  // Relatório Analítico Detalhado por Categorias de Engenharia (12 Categorias)
+  const relatorioCategoriasEtapas = useMemo(() => {
+    return CATEGORIAS_ETAPAS.map(cat => {
+      // Tarefas desta categoria
+      const tarefasDestaCat = tarefas.filter(t => {
+        const catTarefa = t.categoria || sugerirCategoriaPorTitulo(t.titulo);
+        if (cat.id === 'Instalações') {
+          return catTarefa.startsWith('Instalações');
+        }
+        return catTarefa === cat.id;
+      });
+
+      const totalTarefasCat = tarefasDestaCat.length;
+      const tarefasConcluidasCat = tarefasDestaCat.filter(t => t.status === 'CONCLUIDA').length;
+      const tarefasEmAndamentoCat = tarefasDestaCat.filter(t => t.iniciada && t.status !== 'CONCLUIDA').length;
+      const tarefasAtrasadasCat = tarefasDestaCat.filter(t => t.status !== 'CONCLUIDA' && (t.status === 'ATRASADA' || t.dataFimPrevista < hojeStr)).length;
+
+      // Subtarefas desta categoria
+      const subtarefasDestaCat = tarefasDestaCat.flatMap(t => t.subtarefas || []);
+      const totalSubtarefasCat = subtarefasDestaCat.length;
+      const subtarefasConcluidasCat = subtarefasDestaCat.filter(s => s.concluida).length;
+
+      // Duração planejada (dias)
+      const duracaoTotalDias = tarefasDestaCat.reduce((acc, t) => acc + (t.duracaoDias || 0), 0);
+      const duracaoMediaDias = totalTarefasCat > 0 ? Math.round(duracaoTotalDias / totalTarefasCat) : 0;
+
+      // Gastos financeiros vinculados
+      const idsTarefas = new Set(tarefasDestaCat.map(t => t.id));
+      const comprasDestaCat = compras.filter(c => c.tarefaId && idsTarefas.has(c.tarefaId));
+      const comprasRealizadasCat = comprasDestaCat.filter(c => !c.isPrevisao);
+      const comprasPrevisaoCat = comprasDestaCat.filter(c => !!c.isPrevisao);
+
+      const totalGastoRealizado = comprasRealizadasCat.reduce((acc, c) => acc + c.valorTotal, 0);
+      const totalGastoPrevisao = comprasPrevisaoCat.reduce((acc, c) => acc + c.valorTotal, 0);
+      const totalGastoGeral = totalGastoRealizado + totalGastoPrevisao;
+      const percentualDoTotalGasto = totalGasto > 0 ? (totalGastoRealizado / totalGasto) * 100 : 0;
+
+      // Progresso percentual físico (ponderando subtarefas e tarefas)
+      let progressoFisico = 0;
+      if (totalSubtarefasCat > 0) {
+        progressoFisico = Math.round((subtarefasConcluidasCat / totalSubtarefasCat) * 100);
+      } else if (totalTarefasCat > 0) {
+        progressoFisico = Math.round((tarefasConcluidasCat / totalTarefasCat) * 100);
+      }
+
+      return {
+        ...cat,
+        tarefas: tarefasDestaCat,
+        totalTarefas: totalTarefasCat,
+        tarefasConcluidas: tarefasConcluidasCat,
+        tarefasEmAndamento: tarefasEmAndamentoCat,
+        tarefasAtrasadas: tarefasAtrasadasCat,
+        totalSubtarefas: totalSubtarefasCat,
+        subtarefasConcluidas: subtarefasConcluidasCat,
+        duracaoTotalDias,
+        duracaoMediaDias,
+        progressoFisico,
+        totalGastoRealizado,
+        totalGastoPrevisao,
+        totalGastoGeral,
+        percentualDoTotalGasto,
+        quantidadeCompras: comprasDestaCat.length
+      };
+    });
+  }, [tarefas, compras, totalGasto, hojeStr]);
+
+  // Indicadores comparativos das categorias
+  const maiorGastoCat = useMemo(() => {
+    const comGastos = relatorioCategoriasEtapas.filter(c => c.totalGastoRealizado > 0);
+    if (comGastos.length === 0) return null;
+    return comGastos.reduce((prev, curr) => curr.totalGastoRealizado > prev.totalGastoRealizado ? curr : prev, comGastos[0]);
+  }, [relatorioCategoriasEtapas]);
+
+  const maiorDuracaoCat = useMemo(() => {
+    const comDuracao = relatorioCategoriasEtapas.filter(c => c.duracaoTotalDias > 0);
+    if (comDuracao.length === 0) return null;
+    return comDuracao.reduce((prev, curr) => curr.duracaoTotalDias > prev.duracaoTotalDias ? curr : prev, comDuracao[0]);
+  }, [relatorioCategoriasEtapas]);
+
+  const totalDiasCronogramaObra = useMemo(() => {
+    return relatorioCategoriasEtapas.reduce((acc, c) => acc + c.duracaoTotalDias, 0);
+  }, [relatorioCategoriasEtapas]);
+
+  // Dados formatados para o Gráfico Pizza de Despesas por Categoria
+  const dadosPizzaTipos = useMemo(() => {
+    const mapaCores: Record<string, { hex: string; bg: string; text: string }> = {
+      'Material': { hex: '#6366f1', bg: 'bg-indigo-50', text: 'text-indigo-700' },
+      'Serviço': { hex: '#f59e0b', bg: 'bg-amber-50', text: 'text-amber-700' },
+      'Transporte': { hex: '#0ea5e9', bg: 'bg-sky-50', text: 'text-sky-700' },
+      'Alimentação': { hex: '#10b981', bg: 'bg-emerald-50', text: 'text-emerald-700' }
+    };
+
+    interface ItemPizzaTipo {
+      id: string;
+      nome: string;
+      total: number;
+      percentual: number;
+      quantidade: number;
+      hex: string;
+      bg: string;
+      text: string;
+      Icon: React.ElementType;
+    }
+
+    const itens: ItemPizzaTipo[] = relatorioCategorias.map(c => ({
+      id: c.nome as string,
+      nome: c.nome as string,
+      total: c.total,
+      percentual: c.percentual,
+      quantidade: c.quantidadeDespesas,
+      hex: mapaCores[c.nome]?.hex || '#8b5cf6',
+      bg: mapaCores[c.nome]?.bg || 'bg-purple-50',
+      text: mapaCores[c.nome]?.text || 'text-purple-700',
+      Icon: c.Icon
+    }));
+
+    // Se houver compras com categoria personalizada não mapeada
+    const categoriasBase = new Set(['Material', 'Serviço', 'Transporte', 'Alimentação']);
+    const comprasOutras = comprasRealizadas.filter(c => c.categoria && !categoriasBase.has(c.categoria));
+    if (comprasOutras.length > 0) {
+      const totalOutras = comprasOutras.reduce((acc, c) => acc + c.valorTotal, 0);
+      itens.push({
+        id: 'Outros',
+        nome: 'Outros',
+        total: totalOutras,
+        percentual: totalGasto > 0 ? (totalOutras / totalGasto) * 100 : 0,
+        quantidade: comprasOutras.length,
+        hex: '#8b5cf6',
+        bg: 'bg-purple-50',
+        text: 'text-purple-700',
+        Icon: Tag
+      });
+    }
+
+    return itens;
+  }, [relatorioCategorias, comprasRealizadas, totalGasto]);
+
+  const dadosPizzaEtapas = useMemo(() => {
+    const coresEtapas = [
+      '#6366f1', '#3b82f6', '#0ea5e9', '#06b6d4', 
+      '#10b981', '#84cc16', '#eab308', '#f59e0b', 
+      '#f97316', '#ef4444', '#ec4899', '#8b5cf6'
+    ];
+
+    const itens = relatorioCategoriasEtapas
+      .filter(c => c.totalGastoRealizado > 0)
+      .map((c, idx) => ({
+        id: c.id,
+        nome: `${c.numero}. ${c.nome}`,
+        total: c.totalGastoRealizado,
+        percentual: totalGasto > 0 ? (c.totalGastoRealizado / totalGasto) * 100 : 0,
+        quantidade: c.quantidadeCompras,
+        hex: coresEtapas[idx % coresEtapas.length],
+        bg: 'bg-slate-50',
+        text: 'text-slate-800',
+        Icon: Layers
+      }));
+
+    if (totalSemTarefa > 0) {
+      itens.push({
+        id: 'Gerais',
+        nome: 'Despesas Gerais (Sem Etapa)',
+        total: totalSemTarefa,
+        percentual: totalGasto > 0 ? (totalSemTarefa / totalGasto) * 100 : 0,
+        quantidade: comprasSemTarefa.length,
+        hex: '#94a3b8',
+        bg: 'bg-slate-50',
+        text: 'text-slate-600',
+        Icon: Tag
+      });
+    }
+
+    return itens;
+  }, [relatorioCategoriasEtapas, totalGasto, totalSemTarefa, comprasSemTarefa.length]);
+
+  const dadosPizzaAtuais = tipoAgrupamentoPizza === 'TIPO' ? dadosPizzaTipos : dadosPizzaEtapas;
+  const fatiasPizza = useMemo(() => {
+    return dadosPizzaAtuais.filter(item => item.total > 0);
+  }, [dadosPizzaAtuais]);
+
+  // Filtragem de tarefas para o relatório detalhado
+  const tarefasFiltradas = relatorioTarefas.filter(t => {
+    if (apenasComGastos && t.totalGasto === 0 && t.totalPrevisaoTarefa === 0) return false;
+    if (filtroCategoriaRelatorio !== 'TODAS') {
+      const catTarefa = t.categoria || sugerirCategoriaPorTitulo(t.titulo);
+      if (filtroCategoriaRelatorio === 'Instalações') {
+        if (!catTarefa.startsWith('Instalações')) return false;
+      } else if (catTarefa !== filtroCategoriaRelatorio) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   // Alertas
   const tarefasAtrasadas = tarefas.filter(t => 
@@ -447,6 +649,275 @@ export function Dashboard({
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* SEÇÃO: GRÁFICO PIZZA DE DESPESAS POR CATEGORIA */}
+      {/* ========================================================================= */}
+      <div className="bg-white p-4 sm:p-5 rounded-2xl shadow-xs border border-slate-200/80 space-y-4">
+        {/* Cabeçalho com Título, Seletor de Modo e Atalho de Extrato */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-rose-50 text-rose-600 rounded-xl">
+              <PieChart className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-800 text-sm sm:text-base">
+                Gráfico Pizza de Despesas por Categoria
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Distribuição percentual e financeira dos custos da obra
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+            {/* Seletor de Modo de Agrupamento */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setTipoAgrupamentoPizza('TIPO')}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  tipoAgrupamentoPizza === 'TIPO'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Tipo de Custo
+              </button>
+              <button
+                type="button"
+                onClick={() => setTipoAgrupamentoPizza('ETAPA')}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  tipoAgrupamentoPizza === 'ETAPA'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Etapas da Obra
+              </button>
+            </div>
+
+            {onNavigateFinanceiro && (
+              <button
+                type="button"
+                onClick={onNavigateFinanceiro}
+                className="text-xs font-bold text-slate-700 hover:text-slate-900 flex items-center gap-1 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer"
+              >
+                <span>Extrato</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Visualização: Gráfico Donut/Pizza e Painel de Legenda */}
+        {fatiasPizza.length === 0 ? (
+          <div className="p-8 text-center bg-slate-50/70 rounded-xl border border-slate-100 space-y-2">
+            <div className="w-10 h-10 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+              <PieChart className="w-5 h-5" />
+            </div>
+            <p className="text-xs font-bold text-slate-700">Nenhuma despesa registrada nesta obra ainda</p>
+            <p className="text-[11px] text-slate-400">
+              Cadastre compras ou pagamentos no módulo Financeiro para visualizar o gráfico de pizza.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+            {/* Donut SVG Interativo */}
+            <div className="col-span-1 md:col-span-5 flex flex-col items-center justify-center">
+              <div className="relative w-44 h-44 sm:w-48 sm:h-48 flex items-center justify-center">
+                <svg 
+                  className="w-full h-full transform -rotate-90 drop-shadow-xs" 
+                  viewBox="0 0 160 160"
+                >
+                  {/* Círculo de Trilha Base */}
+                  <circle
+                    cx="80"
+                    cy="80"
+                    r={52}
+                    fill="transparent"
+                    stroke="#f1f5f9"
+                    strokeWidth={16}
+                  />
+
+                  {/* Arcos das Fatias com cálculo de circunferência */}
+                  {(() => {
+                    const r = 52;
+                    const circumference = 2 * Math.PI * r;
+                    let accumulatedOffset = 0;
+
+                    return fatiasPizza.map((fatia) => {
+                      const dashLength = (fatia.percentual / 100) * circumference;
+                      const currentOffset = -accumulatedOffset;
+                      accumulatedOffset += dashLength;
+                      const isHovered = categoriaPizzaHover === fatia.id;
+
+                      return (
+                        <circle
+                          key={fatia.id}
+                          cx="80"
+                          cy="80"
+                          r={r}
+                          fill="transparent"
+                          stroke={fatia.hex}
+                          strokeWidth={isHovered ? 20 : 16}
+                          strokeDasharray={`${Math.max(0.2, dashLength)} ${Math.max(0.1, circumference - dashLength)}`}
+                          strokeDashoffset={currentOffset}
+                          strokeLinecap="butt"
+                          className="transition-all duration-300 cursor-pointer"
+                          style={{
+                            opacity: categoriaPizzaHover && !isHovered ? 0.45 : 1,
+                            filter: isHovered ? 'drop-shadow(0 2px 5px rgba(0,0,0,0.2))' : 'none'
+                          }}
+                          onMouseEnter={() => setCategoriaPizzaHover(fatia.id)}
+                          onMouseLeave={() => setCategoriaPizzaHover(null)}
+                        />
+                      );
+                    });
+                  })()}
+                </svg>
+
+                {/* Conteúdo Central do Donut */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-4 select-none">
+                  {(() => {
+                    const itemHover = fatiasPizza.find(f => f.id === categoriaPizzaHover);
+                    if (itemHover) {
+                      return (
+                        <>
+                          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider truncate max-w-[120px]">
+                            {itemHover.nome}
+                          </span>
+                          <span className="text-sm sm:text-base font-black text-slate-800 tracking-tight mt-0.5">
+                            R$ {itemHover.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full mt-1 border border-indigo-100">
+                            {itemHover.percentual.toFixed(1)}% do total
+                          </span>
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                          Total Despesas
+                        </span>
+                        <span className="text-sm sm:text-base font-black text-slate-800 tracking-tight mt-0.5">
+                          R$ {totalGasto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-500 mt-1">
+                          {comprasRealizadas.length} {comprasRealizadas.length === 1 ? 'despesa' : 'despesas'}
+                        </span>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <span className="text-[10px] text-slate-400 mt-1 font-medium">
+                Passe o mouse ou toque para inspecionar cada fatia
+              </span>
+            </div>
+
+            {/* Painel Lateral com Legenda e Detalhamento das Fatias */}
+            <div className="col-span-1 md:col-span-7 space-y-2 max-h-72 overflow-y-auto pr-1">
+              {fatiasPizza.map((fatia) => {
+                const isHovered = categoriaPizzaHover === fatia.id;
+                return (
+                  <div
+                    key={fatia.id}
+                    onMouseEnter={() => setCategoriaPizzaHover(fatia.id)}
+                    onMouseLeave={() => setCategoriaPizzaHover(null)}
+                    className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                      isHovered
+                        ? 'border-indigo-300 bg-indigo-50/50 shadow-xs ring-1 ring-indigo-200'
+                        : 'border-slate-200/70 bg-slate-50/60 hover:bg-slate-50 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          className="w-3 h-3 rounded-md shrink-0 shadow-2xs"
+                          style={{ backgroundColor: fatia.hex }}
+                        />
+                        <div className="min-w-0">
+                          <span className="text-xs font-bold text-slate-800 truncate block">
+                            {fatia.nome}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            {fatia.quantidade} {fatia.quantidade === 1 ? 'lançamento' : 'lançamentos'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-black text-slate-900 block">
+                          R$ {fatia.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-[10px] font-bold text-indigo-700 bg-white px-1.5 py-0.2 rounded border border-slate-200/80 inline-block mt-0.5">
+                          {fatia.percentual.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Barra de Proporção Relativa */}
+                    <div className="w-full bg-slate-200/70 rounded-full h-1.5 mt-2 overflow-hidden">
+                      <div
+                        className="h-1.5 rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(fatia.percentual, 100)}%`,
+                          backgroundColor: fatia.hex
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Cards Rápidos de Apoio por Tipo de Custo */}
+        <div className="pt-2 border-t border-slate-100">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-2">
+            Resumo Rápido por Natureza de Custo
+          </span>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            {relatorioCategorias.map(cat => {
+              const Icone = cat.Icon;
+              return (
+                <div 
+                  key={cat.nome} 
+                  className={`p-2.5 rounded-xl border ${cat.border} ${cat.bg} flex flex-col justify-between space-y-1.5`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800">{cat.nome}</span>
+                    <div className={`p-1 rounded-lg bg-white/80 ${cat.cor}`}>
+                      <Icone className="w-3.5 h-3.5" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-xs sm:text-sm font-black text-slate-900 block">
+                      R$ {cat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 mt-0.5 font-medium">
+                      <span>{cat.percentual.toFixed(1)}%</span>
+                      <span>{cat.quantidadeDespesas} desp.</span>
+                    </div>
+                  </div>
+
+                  <div className="w-full bg-white/80 rounded-full h-1.5 overflow-hidden">
+                    <div 
+                      className={`${cat.bar} h-1.5 rounded-full transition-all duration-500`}
+                      style={{ width: `${Math.min(cat.percentual, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
       {/* Progresso Geral da Obra */}
       <div className="bg-white p-4 rounded-2xl shadow-xs border border-slate-100">
         <div className="flex justify-between items-end mb-2.5">
@@ -468,66 +939,299 @@ export function Dashboard({
       </div>
 
       {/* ========================================================================= */}
-      {/* DISTRIBUIÇÃO DE DESPESAS POR CATEGORIA (MATERIAL, SERVIÇO, TRANSPORTE, ALIMENTAÇÃO) */}
+      {/* PAINEL DE ANÁLISE POR CATEGORIA DE ETAPA (12 CATEGORIAS DA CONSTRUÇÃO) */}
       {/* ========================================================================= */}
-      <div className="bg-white p-4 rounded-2xl shadow-xs border border-slate-200/80 space-y-3">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 bg-rose-50 text-rose-600 rounded-lg">
-              <PieChart className="w-4 h-4" />
+      <div className="bg-white p-4 rounded-2xl shadow-xs border border-slate-200/80 space-y-4">
+        {/* Cabeçalho da Análise */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                <BarChart3 className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-slate-800 text-sm">Análise por Etapa</h3>
             </div>
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm">Despesas por Categoria</h3>
-              <p className="text-[11px] text-slate-500">Distribuição dos custos por tipo de gasto</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Gastos, duração e progresso nas etapas da construção civil
+            </p>
+          </div>
+        </div>
+
+        {/* Cards de Destaques Rápidos */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+              Maior Investimento
+            </span>
+            <span className="text-xs font-bold text-slate-800 truncate block mt-0.5">
+              {maiorGastoCat ? `${maiorGastoCat.numero}. ${maiorGastoCat.nome}` : 'Nenhum gasto'}
+            </span>
+            <span className="text-[11px] font-bold text-rose-600 block">
+              {maiorGastoCat ? `R$ ${maiorGastoCat.totalGastoRealizado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'R$ 0,00'}
+            </span>
+          </div>
+
+          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+              Maior Duração
+            </span>
+            <span className="text-xs font-bold text-slate-800 truncate block mt-0.5">
+              {maiorDuracaoCat ? `${maiorDuracaoCat.numero}. ${maiorDuracaoCat.nome}` : 'Nenhuma etapa'}
+            </span>
+            <span className="text-[11px] font-bold text-indigo-600 block">
+              {maiorDuracaoCat ? `${maiorDuracaoCat.duracaoTotalDias} dias previstos` : '0 dias'}
+            </span>
+          </div>
+
+          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 col-span-2 sm:col-span-1">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+              Volume de Etapas
+            </span>
+            <span className="text-xs font-bold text-slate-800 block mt-0.5">
+              {tarefas.length} {tarefas.length === 1 ? 'etapa cadastrada' : 'etapas cadastradas'}
+            </span>
+            <span className="text-[11px] font-medium text-emerald-600 block">
+              {tarefasConcluidas} concluídas ({progresso}%)
+            </span>
+          </div>
+        </div>
+
+        {/* Botão para Expandir / Colapsar detalhes */}
+        <div className="flex items-center justify-center pt-0.5">
+          <button
+            type="button"
+            onClick={() => setMostrarDetalhesEtapas(!mostrarDetalhesEtapas)}
+            className="w-full sm:w-auto flex items-center justify-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-slate-50 hover:bg-slate-100 border border-slate-200/70 px-4 py-2 rounded-xl transition-all cursor-pointer"
+          >
+            <span>{mostrarDetalhesEtapas ? 'Ocultar detalhes' : 'Ver detalhes'}</span>
+            {mostrarDetalhesEtapas ? (
+              <ChevronUp className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5" />
+            )}
+          </button>
+        </div>
+
+        {/* Trecho Detalhado Colapsável */}
+        {mostrarDetalhesEtapas && (
+          <div className="space-y-4 pt-2 border-t border-slate-100 animate-in fade-in duration-200">
+            {/* Seletor de Modo de Visualização */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-xl self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => setModoAnaliseEtapas('GASTOS')}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  modoAnaliseEtapas === 'GASTOS'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                💰 Gastos
+              </button>
+              <button
+                type="button"
+                onClick={() => setModoAnaliseEtapas('DURACAO')}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  modoAnaliseEtapas === 'DURACAO'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                ⏱️ Duração
+              </button>
+              <button
+                type="button"
+                onClick={() => setModoAnaliseEtapas('PROGRESSO')}
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  modoAnaliseEtapas === 'PROGRESSO'
+                    ? 'bg-white text-indigo-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                🎯 Progresso
+              </button>
+            </div>
+
+            {/* Filtro: Mostrar apenas categorias com tarefas ou despesas */}
+            <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+              <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={apenasCategoriasComAtividades}
+                  onChange={e => setApenasCategoriasComAtividades(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
+                <span className="font-medium">Ocultar categorias sem etapas nesta obra</span>
+              </label>
+            </div>
+
+            {/* Lista de Gráficos e Barras Analíticas por Categoria */}
+            <div className="space-y-2.5 pt-1">
+              {relatorioCategoriasEtapas
+                .filter(cat => !apenasCategoriasComAtividades || cat.totalTarefas > 0 || cat.totalGastoRealizado > 0)
+                .map(cat => {
+                  const temAtividade = cat.totalTarefas > 0 || cat.totalGastoRealizado > 0;
+                  const maxGasto = maiorGastoCat?.totalGastoRealizado || 1;
+                  const percentualBarraGasto = maxGasto > 0 ? (cat.totalGastoRealizado / maxGasto) * 100 : 0;
+                  const maxDuracao = maiorDuracaoCat?.duracaoTotalDias || 1;
+                  const percentualBarraDuracao = maxDuracao > 0 ? (cat.duracaoTotalDias / maxDuracao) * 100 : 0;
+
+                  return (
+                    <div
+                      key={cat.id}
+                      className={`p-3 rounded-xl border transition-all ${
+                        temAtividade
+                          ? 'bg-white border-slate-200/90 shadow-2xs hover:border-indigo-300'
+                          : 'bg-slate-50/70 border-slate-200/50 opacity-60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        {/* Badge e Nome da Categoria */}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border shrink-0 ${cat.corBadge}`}>
+                            {cat.numero}
+                          </span>
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-slate-800 truncate block">
+                              {cat.nome}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-normal truncate block">
+                              {cat.descricao}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Botão de Atalho para o Cronograma */}
+                        <button
+                          type="button"
+                          onClick={() => onNavigateCronograma && onNavigateCronograma(cat.id)}
+                          title={`Abrir ${cat.nome} no Cronograma`}
+                          className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 px-2 py-1 rounded-lg transition-colors flex items-center gap-1 cursor-pointer shrink-0"
+                        >
+                          <span>Ver no Cronograma</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {/* Conteúdo Dinâmico Baseado no Modo Selecionado */}
+                      {modoAnaliseEtapas === 'GASTOS' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-800">
+                                R$ {cat.totalGastoRealizado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                              {cat.totalGastoPrevisao > 0 && (
+                                <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+                                  + R$ {cat.totalGastoPrevisao.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} previstos
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] font-bold text-slate-500">
+                              {cat.percentualDoTotalGasto.toFixed(1)}% dos gastos
+                            </span>
+                          </div>
+
+                          {/* Barra de Progresso Financeiro */}
+                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div
+                              className="h-2 rounded-full bg-indigo-600 transition-all duration-500"
+                              style={{ width: `${Math.min(percentualBarraGasto, 100)}%` }}
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span>{cat.quantidadeCompras} {cat.quantidadeCompras === 1 ? 'despesa alocada' : 'despesas alocadas'}</span>
+                            <span>{cat.totalTarefas} {cat.totalTarefas === 1 ? 'etapa cadastrada' : 'etapas cadastradas'}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {modoAnaliseEtapas === 'DURACAO' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-800">
+                                {cat.duracaoTotalDias} {cat.duracaoTotalDias === 1 ? 'dia planejado' : 'dias planejados'}
+                              </span>
+                              {cat.duracaoMediaDias > 0 && (
+                                <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded font-medium">
+                                  Média: {cat.duracaoMediaDias}d / etapa
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] font-bold text-slate-500">
+                              {totalDiasCronogramaObra > 0 ? ((cat.duracaoTotalDias / totalDiasCronogramaObra) * 100).toFixed(1) : 0}% do tempo da obra
+                            </span>
+                          </div>
+
+                          {/* Barra de Proporção de Duração */}
+                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div
+                              className="h-2 rounded-full bg-amber-500 transition-all duration-500"
+                              style={{ width: `${Math.min(percentualBarraDuracao, 100)}%` }}
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span>{cat.tarefasConcluidas} concluídas • {cat.tarefasEmAndamento} em andamento</span>
+                            {cat.tarefasAtrasadas > 0 ? (
+                              <span className="text-rose-600 font-bold">{cat.tarefasAtrasadas} atrasadas</span>
+                            ) : (
+                              <span className="text-emerald-600 font-medium">Sem atrasos</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {modoAnaliseEtapas === 'PROGRESSO' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-800">
+                                {cat.progressoFisico}% concluído
+                              </span>
+                              <span className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded font-medium">
+                                {cat.tarefasConcluidas} de {cat.totalTarefas} etapas
+                              </span>
+                            </div>
+                            <span className="text-[10px] font-semibold text-slate-500">
+                              {cat.subtarefasConcluidas}/{cat.totalSubtarefas} subtarefas
+                            </span>
+                          </div>
+
+                          {/* Barra de Progresso Físico */}
+                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                            <div
+                              className={`h-2 rounded-full transition-all duration-500 ${
+                                cat.progressoFisico === 100 ? 'bg-emerald-500' : 'bg-indigo-600'
+                              }`}
+                              style={{ width: `${Math.min(cat.progressoFisico, 100)}%` }}
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span>
+                              {cat.totalTarefas === 0 
+                                ? 'Nenhuma etapa iniciada' 
+                                : cat.tarefasConcluidas === cat.totalTarefas 
+                                ? '✓ Etapa 100% finalizada' 
+                                : `${cat.totalTarefas - cat.tarefasConcluidas} pendentes`}
+                            </span>
+                            {cat.tarefasAtrasadas > 0 && (
+                              <span className="text-rose-600 font-bold flex items-center gap-0.5">
+                                <AlertTriangle className="w-2.5 h-2.5" /> Atenção aos prazos
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
             </div>
           </div>
-          {onNavigateFinanceiro && (
-            <button
-              type="button"
-              onClick={onNavigateFinanceiro}
-              className="text-[11px] font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1 bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded-lg transition-colors cursor-pointer"
-            >
-              Extrato
-              <ArrowRight className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-          {relatorioCategorias.map(cat => {
-            const Icone = cat.Icon;
-            return (
-              <div 
-                key={cat.nome} 
-                className={`p-3 rounded-xl border ${cat.border} ${cat.bg} flex flex-col justify-between space-y-2`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800">{cat.nome}</span>
-                  <div className={`p-1 rounded-lg bg-white/70 ${cat.cor}`}>
-                    <Icone className="w-3.5 h-3.5" />
-                  </div>
-                </div>
-
-                <div>
-                  <span className="text-sm font-black text-slate-900 block">
-                    R$ {cat.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                  </span>
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 mt-0.5 font-medium">
-                    <span>{cat.percentual.toFixed(1)}%</span>
-                    {/* <span>{cat.quantidadeDespesas} desp. • {cat.totalItens} it.</span> */}
-                  </div>
-                </div>
-
-                <div className="w-full bg-white/80 rounded-full h-1.5 overflow-hidden">
-                  <div 
-                    className={`${cat.bar} h-1.5 rounded-full transition-all duration-500`}
-                    style={{ width: `${Math.min(cat.percentual, 100)}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -540,32 +1244,31 @@ export function Dashboard({
               <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
                 <PieChart className="w-4 h-4" />
               </div>
-              <h3 className="font-bold text-slate-800 text-sm">Relatório de Gastos por Etapa</h3>
+              <h3 className="font-bold text-slate-800 text-sm">Análise por Tarefas</h3>
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
               Custos contabilizados por etapas e subtarefas
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setApenasComGastos(!apenasComGastos)}
-              className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium transition-colors cursor-pointer ${
-                apenasComGastos 
-                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200' 
-                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-              }`}
-            >
-              {apenasComGastos ? 'Mostrando com Gastos' : 'Mostrar Todos'}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setMostrarDetalhesTarefas(!mostrarDetalhesTarefas)}
+            className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition-all cursor-pointer shrink-0 self-start sm:self-auto"
+          >
+            <span>{mostrarDetalhesTarefas ? 'Ocultar tarefas' : 'Ver tarefas'}</span>
+            {mostrarDetalhesTarefas ? (
+              <ChevronUp className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5" />
+            )}
+          </button>
         </div>
 
-        {/* Resumo de Alocação de Gastos */}
+        {/* Resumo de Alocação de Gastos (sempre visível) */}
         <div className="grid grid-cols-2 gap-2.5 bg-slate-50 p-3 rounded-xl border border-slate-100">
           <div>
-            <span className="text-[10px] text-slate-500 font-medium block">Alocado em Etapas</span>
+            <span className="text-[10px] text-slate-500 font-medium block">Alocado em Tarefas</span>
             <span className="text-xs font-bold text-slate-800">
               R$ {totalAlocadoEmTarefas.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </span>
@@ -585,8 +1288,62 @@ export function Dashboard({
           </div>
         </div>
 
-        {/* Lista de Etapas e seus gastos */}
-        <div className="space-y-2">
+        {/* Botão de Expansão/Colapso para Despoluir Tela */}
+        <div className="flex justify-center pt-0.5">
+          <button
+            type="button"
+            onClick={() => setMostrarDetalhesTarefas(!mostrarDetalhesTarefas)}
+            className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition-colors py-1 px-3 rounded-lg hover:bg-indigo-50/60 cursor-pointer"
+          >
+            <span>
+              {mostrarDetalhesTarefas 
+                ? 'Recolher lista de tarefas' 
+                : `Ver detalhamento de ${tarefasFiltradas.length} tarefas`}
+            </span>
+            {mostrarDetalhesTarefas ? (
+              <ChevronUp className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5" />
+            )}
+          </button>
+        </div>
+
+        {/* Bloco Detalhado de Tarefas Colapsável */}
+        {mostrarDetalhesTarefas && (
+          <div className="space-y-3 pt-2 border-t border-slate-100">
+            {/* Seletor e Filtro */}
+            <div className="flex items-center justify-between gap-2 flex-wrap bg-slate-50/70 p-2 rounded-xl border border-slate-100">
+              <span className="text-xs font-bold text-slate-700">Filtros:</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={filtroCategoriaRelatorio}
+                  onChange={e => setFiltroCategoriaRelatorio(e.target.value)}
+                  className="text-[11px] bg-white border border-slate-200 rounded-lg px-2 py-1 text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="TODAS">Todas as Categorias</option>
+                  {CATEGORIAS_ETAPAS.map(cat => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.numero}. {cat.nome}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => setApenasComGastos(!apenasComGastos)}
+                  className={`text-[11px] px-2.5 py-1 rounded-lg border font-medium transition-colors cursor-pointer ${
+                    apenasComGastos 
+                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200' 
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {apenasComGastos ? 'Com Gastos' : 'Todos'}
+                </button>
+              </div>
+            </div>
+
+            {/* Lista de Etapas e seus gastos */}
+            <div className="space-y-2">
           {tarefasFiltradas.map((tarefa) => {
             const isExpandida = etapasExpandidas[tarefa.id];
             const temSubtarefas = tarefa.subtarefasComGastos && tarefa.subtarefasComGastos.length > 0;
@@ -635,6 +1392,12 @@ export function Dashboard({
                         <span className={`text-xs font-bold truncate ${isConcluida ? 'text-slate-600 line-through' : 'text-slate-800'}`}>
                           {tarefa.titulo}
                         </span>
+                        
+                        {/* Badge de Categoria da Etapa */}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${getInfoCategoria(tarefa.categoria || sugerirCategoriaPorTitulo(tarefa.titulo)).corBadge}`}>
+                          {getInfoCategoria(tarefa.categoria || sugerirCategoriaPorTitulo(tarefa.titulo)).nome}
+                        </span>
+
                         {isConcluida && (
                           <span className="text-[9px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded font-bold border border-emerald-200/60">
                             Concluída
@@ -773,7 +1536,9 @@ export function Dashboard({
               </div>
             );
           })}
-        </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Alertas & Notificações */}

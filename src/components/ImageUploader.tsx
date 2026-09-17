@@ -49,10 +49,10 @@ export function ImageUploader({ onImageSelected, label = "Anexar Foto", preview 
         ) : localPreview ? (
           <img src={localPreview} alt="Preview" className="w-full h-full object-cover" />
         ) : (
-          <div className="flex flex-col items-center justify-center pt-5 pb-6 text-slate-500">
+          <div className="flex flex-col items-center justify-center p-6 text-slate-500">
             <Camera className="w-8 h-8 mb-2" />
             <p className="text-sm font-semibold">{label}</p>
-            <p className="text-xs text-slate-400 mt-1">Clique ou toque para tirar foto ou escolher da galeria</p>
+            
           </div>
         )}
         <input 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppState, Obra, Tarefa, Compra, PagamentoCliente, DiarioObra, TicketAlteracao, TicketStatus, ItemChecadoDiario } from './types';
+import { sugerirCategoriaPorTitulo } from './constants/categorias';
 
 export type { AppState };
 
@@ -27,7 +28,7 @@ const initialMockState: AppState = {
   obras: [
     {
       id: 'obra-1',
-      nome: 'Residência Silva',
+      nome: 'Esteticare',
       orcamentoPrevisto: 150000,
       dataInicio: anteontemStr,
       status: 'EM_ANDAMENTO',
@@ -38,6 +39,7 @@ const initialMockState: AppState = {
       id: 'tar-0',
       obraId: 'obra-1',
       titulo: 'Sondagem do Solo e Topografia',
+      categoria: 'Serviços preliminares',
       dataInicioPrevista: anteontemStr,
       dataFimPrevista: ontemStr,
       duracaoDias: 2,
@@ -49,6 +51,7 @@ const initialMockState: AppState = {
         {
           id: 'sub-0a',
           titulo: 'Levantamento topográfico planialtimétrico',
+          categoria: 'Serviços preliminares',
           dataInicioPrevista: anteontemStr,
           dataFimPrevista: ontemStr,
           duracaoDias: 2,
@@ -62,6 +65,7 @@ const initialMockState: AppState = {
       id: 'tar-1',
       obraId: 'obra-1',
       titulo: 'Fundação e Baldrame',
+      categoria: 'Infraestrutura',
       dataInicioPrevista: anteontemStr,
       dataFimPrevista: em15DiasStr,
       duracaoDias: 16,
@@ -73,6 +77,7 @@ const initialMockState: AppState = {
         { 
           id: 'sub-1', 
           titulo: 'Escavação das sapatas', 
+          categoria: 'Infraestrutura',
           dataInicioPrevista: anteontemStr,
           dataFimPrevista: new Date(Date.now() + 4 * 86400000).toISOString().split('T')[0],
           duracaoDias: 5,
@@ -84,6 +89,7 @@ const initialMockState: AppState = {
         { 
           id: 'sub-2', 
           titulo: 'Armação de aço e formas', 
+          categoria: 'Superestrutura',
           dataInicioPrevista: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0],
           dataFimPrevista: new Date(Date.now() + 10 * 86400000).toISOString().split('T')[0],
           duracaoDias: 6,
@@ -93,6 +99,7 @@ const initialMockState: AppState = {
         { 
           id: 'sub-3', 
           titulo: 'Concretagem usinada', 
+          categoria: 'Superestrutura',
           dataInicioPrevista: new Date(Date.now() + 11 * 86400000).toISOString().split('T')[0],
           dataFimPrevista: em15DiasStr,
           duracaoDias: 5,
@@ -105,6 +112,7 @@ const initialMockState: AppState = {
       id: 'tar-3',
       obraId: 'obra-1',
       titulo: 'Instalações Provisórias e Canteiro',
+      categoria: 'Serviços preliminares',
       dataInicioPrevista: anteontemStr,
       dataFimPrevista: hojeStr,
       duracaoDias: 3,
@@ -116,6 +124,7 @@ const initialMockState: AppState = {
         {
           id: 'sub-3a',
           titulo: 'Ligação de água e energia provisória',
+          categoria: 'Instalações elétricas',
           dataInicioPrevista: anteontemStr,
           dataFimPrevista: hojeStr,
           duracaoDias: 3,
@@ -129,6 +138,7 @@ const initialMockState: AppState = {
       id: 'tar-4',
       obraId: 'obra-1',
       titulo: 'Mobilização de Máquinas e Terraplanagem',
+      categoria: 'Infraestrutura',
       dataInicioPrevista: hojeStr,
       dataFimPrevista: new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0],
       duracaoDias: 4,
@@ -139,6 +149,7 @@ const initialMockState: AppState = {
         {
           id: 'sub-4a',
           titulo: 'Chegada da retroescavadeira na obra',
+          categoria: 'Infraestrutura',
           dataInicioPrevista: hojeStr,
           dataFimPrevista: hojeStr,
           duracaoDias: 1,
@@ -151,6 +162,7 @@ const initialMockState: AppState = {
       id: 'tar-2',
       obraId: 'obra-1',
       titulo: 'Alvenaria Estrutural',
+      categoria: 'Alvenaria',
       dataInicioPrevista: em1DiaStr,
       dataFimPrevista: em21DiasStr,
       duracaoDias: 21,
@@ -161,6 +173,7 @@ const initialMockState: AppState = {
         { 
           id: 'sub-4', 
           titulo: 'Marcação de primeiras fiadas', 
+          categoria: 'Alvenaria',
           dataInicioPrevista: em1DiaStr,
           dataFimPrevista: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0],
           duracaoDias: 5,
@@ -170,6 +183,7 @@ const initialMockState: AppState = {
         { 
           id: 'sub-5', 
           titulo: 'Assentamento de blocos e grauteamento', 
+          categoria: 'Alvenaria',
           dataInicioPrevista: new Date(Date.now() + 6 * 86400000).toISOString().split('T')[0],
           dataFimPrevista: em21DiasStr,
           duracaoDias: 16,
@@ -460,8 +474,10 @@ export function useStore() {
             const iniciada = t.iniciada !== undefined ? t.iniciada : temAtividade;
             const dataInicioReal = t.dataInicioReal || (iniciada ? dataInicioPrevista : undefined);
 
+            const categoria = t.categoria || sugerirCategoriaPorTitulo(t.titulo);
             const subtarefas = (t.subtarefas || []).map(st => ({
               ...st,
+              categoria: st.categoria || categoria || sugerirCategoriaPorTitulo(st.titulo),
               dataInicioPrevista: st.dataInicioPrevista || dataInicioPrevista,
               dataFimPrevista: st.dataFimPrevista || t.dataFimPrevista,
               iniciada: st.iniciada !== undefined ? st.iniciada : (st.concluida || iniciada),
@@ -470,6 +486,7 @@ export function useStore() {
 
             return {
               ...t,
+              categoria,
               fotosExecucao: Array.isArray(t.fotosExecucao) ? t.fotosExecucao : [],
               dataInicioPrevista,
               iniciada,
