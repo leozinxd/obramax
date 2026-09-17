@@ -2128,8 +2128,8 @@ export function Cronograma({
 
       {/* Modal de Edição de Sub-tarefa (com fotos de comprovação) */}
       {subtarefaEmEdicao && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs justify-center p-4 z-50">
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[80vh]">
             <div className="p-4 bg-indigo-600 text-white flex justify-between items-center">
               <h3 className="font-bold text-base flex items-center gap-2">
                 <Pencil className="w-4 h-4" />

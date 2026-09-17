@@ -104,8 +104,8 @@ export function ModalEditarRdoConfirmacao({
   const itensChecados = diario.itensChecados || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] my-auto">
+    <div className="fixed inset-0 z-50 justify-center p-3 bg-black/60 backdrop-blur-xs overflow-y-auto">
+      <div className="bg-white w-full max-w-lg rounded-2xl shadow-xl border border-slate-200 overflow-hidden flex flex-col max-h-[80vh] my-auto">
         {/* Cabeçalho */}
         <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-purple-50 via-indigo-50/50 to-white">
           <div className="flex items-center gap-2.5">
@@ -294,13 +294,13 @@ export function ModalEditarRdoConfirmacao({
 
         {/* Rodapé com Ações */}
         <div className="p-3.5 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-2">
-          <button
+        {/*   <button
             type="button"
             onClick={onClose}
             className="px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-200/60 rounded-xl transition-colors cursor-pointer shrink-0"
           >
             Cancelar
-          </button>
+          </button> */}
 
           <div className="flex items-center gap-2">
             {onSalvarSemConfirmar && (
@@ -320,7 +320,7 @@ export function ModalEditarRdoConfirmacao({
               className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs hover:shadow transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
             >
               <Check className="w-4 h-4" />
-              Salvar e Confirmar RDO
+              Salvar e Criar RDO
             </button>
           </div>
         </div>

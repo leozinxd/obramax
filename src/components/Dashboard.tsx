@@ -387,9 +387,9 @@ export function Dashboard({
         </div>
         
         {/* Card Saldo em Caixa */}
-        <div className="col-span-2 bg-slate-900 p-4 rounded-2xl shadow-sm text-white flex items-center justify-between">
+        <div className="bg-gradient-to-br from-green-700 via-green-900 border-green-800/60 to-slate-700 text-white shadow-md border overflow-hidden col-span-2 bg-slate-900 p-4 rounded-2xl shadow-sm text-white flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Saldo Real em Caixa</span>
+            <span className="text-white text-[10px] font-bold uppercase tracking-wider block">Saldo Real em Caixa</span>
             <div className={`text-2xl font-black mt-0.5 ${saldo >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
               R$ {saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
             </div>

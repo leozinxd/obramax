@@ -10,7 +10,8 @@ import {
   CheckSquare, 
   Square, 
   ListChecks, 
-  CheckCircle2, 
+  CheckCircle2,
+  Calendar, 
   CalendarCheck,
   ChevronDown,
   ChevronUp,
@@ -786,7 +787,7 @@ export function DiarioObra({
                   className="flex-[2] min-w-[160px] bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold py-3 rounded-xl shadow-md transition-all text-xs flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  Salvar e Confirmar RDO
+                  Salvar e Criar RDO
                 </button>
               </>
             ) : (
@@ -1118,8 +1119,8 @@ export function DiarioObra({
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-bold text-slate-800 text-sm group-hover/rdoheader:text-indigo-600 transition-colors">
-                        {new Date(diario.data + 'T00:00:00').toLocaleDateString('pt-BR')}
+                      <h3 className="flex items-center gap-1 font-bold text-slate-800 text-xs group-hover/rdoheader:text-indigo-600 transition-colors">
+                        <Calendar className="w-3 h-3" /> {new Date(diario.data + 'T00:00:00').toLocaleDateString('pt-BR')}
                       </h3>
                       <div className="flex items-center gap-1 text-xs text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">
                         {getClimaIcon(diario.clima)} 
@@ -1144,7 +1145,7 @@ export function DiarioObra({
 
                 {/* Ações: Confirmar (se pendente), Editar, Excluir e Chevron Colapsar */}
                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                  {isPendente && (
+                  {/* {isPendente && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -1157,7 +1158,7 @@ export function DiarioObra({
                       <Check className="w-3.5 h-3.5" />
                       Confirmar
                     </button>
-                  )}
+                  )} */}
                   <button
                     type="button"
                     onClick={() => handleStartEdit(diario)}
@@ -1245,24 +1246,7 @@ export function DiarioObra({
                           </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleStartEdit(diario)}
-                          className="px-2.5 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 font-bold rounded-lg text-amber-900 transition-colors cursor-pointer text-xs flex items-center gap-1 shrink-0"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleConfirmarRdoDireto(diario.id)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition-colors cursor-pointer text-xs flex items-center gap-1 shrink-0"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Confirmar
-                        </button>
-                      </div>
+                      
                     </div>
                   )}
                   {/* Itens do Cronograma Checados no RDO */}
@@ -1326,6 +1310,24 @@ export function DiarioObra({
                       </div>
                     </div>
                   )}
+                  <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleStartEdit(diario)}
+                          className="px-2.5 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 font-bold rounded-lg text-amber-900 transition-colors cursor-pointer text-xs flex items-center gap-1 shrink-0"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          Revisar RDO
+                        </button>
+                        {/* <button
+                          type="button"
+                          onClick={() => handleConfirmarRdoDireto(diario.id)}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg shadow-xs transition-colors cursor-pointer text-xs flex items-center gap-1 shrink-0"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          Confirmar
+                        </button> */}
+                      </div>
                 </div>
               )}
             </div>
