@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useStore } from './store';
+import { AuthScreen } from './components/AuthScreen';
+import { supabase } from './supabase';
+import { Session } from '@supabase/supabase-js';
 import { LayoutDashboard, Wallet, CalendarDays, BookOpen, Ticket } from 'lucide-react';
 
 import { Dashboard } from './components/Dashboard';
@@ -13,6 +16,49 @@ import { Tarefa } from './types';
 type Tab = 'DASHBOARD' | 'FINANCEIRO' | 'CRONOGRAMA' | 'DIARIO' | 'TICKETS';
 
 export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(Boolean(supabase));
+
+  useEffect(() => {
+    if (!supabase) {
+      setIsCheckingSession(false);
+      return;
+    }
+
+    let isCurrent = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setIsCheckingSession(false);
+    });
+    void supabase.auth.getSession()
+      .then(({ data, error }) => {
+        if (error) throw error;
+        if (!isCurrent) return;
+        setSession(data.session);
+        setIsCheckingSession(false);
+      })
+      .catch(error => {
+        if (!isCurrent) return;
+        console.error('Falha ao recuperar sessão Supabase:', error);
+        setIsCheckingSession(false);
+      });
+
+    return () => {
+      isCurrent = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  if (!supabase) return <AuthScreen />;
+  if (isCheckingSession) {
+    return <main className="grid min-h-screen place-items-center bg-slate-100 text-sm text-slate-600">Conectando...</main>;
+  }
+  if (!session) return <AuthScreen />;
+
+  return <AppContent session={session} onSignOut={() => supabase.auth.signOut()} />;
+}
+
+function AppContent({ session, onSignOut }: { session: Session; onSignOut: () => Promise<unknown> }) {
   const { 
     state, 
     setObraAtiva,
@@ -38,10 +84,31 @@ export default function App() {
     addTicket,
     updateTicket,
     updateTicketStatus,
-    deleteTicket 
-  } = useStore();
+    deleteTicket,
+    isLoading,
+    isReady,
+    storageError
+  } = useStore(session.user.id);
   const [activeTab, setActiveTab] = useState<Tab>('DASHBOARD');
   const [filtroCategoriaCronograma, setFiltroCategoriaCronograma] = useState<string>('TODAS');
+
+  if (isLoading) {
+    return <main className="grid min-h-screen place-items-center bg-slate-100 text-sm text-slate-600">Carregando seus dados...</main>;
+  }
+  if (!isReady) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-slate-100 px-5 text-slate-900">
+        <section className="max-w-md rounded-lg bg-white p-6 shadow-sm">
+          <h1 className="text-lg font-bold">Não foi possível carregar os dados</h1>
+          <p className="mt-2 break-words text-sm text-red-700">{storageError || 'Verifique a conexão com o Supabase e tente novamente.'}</p>
+          <div className="mt-5 flex gap-3">
+            <button className="rounded bg-indigo-700 px-4 py-2 text-sm font-semibold text-white" onClick={() => window.location.reload()}>Tentar novamente</button>
+            <button className="rounded border border-slate-300 px-4 py-2 text-sm font-semibold" onClick={() => void onSignOut()}>Sair</button>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   const navItems = [
     { id: 'DASHBOARD', icon: LayoutDashboard, label: 'Início' },
@@ -55,6 +122,16 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
       {/* Mobile-first main content container */}
       <main className="max-w-md mx-auto min-h-screen bg-slate-50 shadow-2xl relative overflow-hidden">
+
+        <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2 text-xs">
+          <span className="max-w-[72%] truncate text-slate-500">{session.user.email}</span>
+          <button className="font-semibold text-slate-600 hover:text-indigo-700" onClick={() => void onSignOut()}>Sair</button>
+        </header>
+        {storageError && (
+          <p className="bg-red-50 px-4 py-2 text-xs text-red-800" role="alert">
+            Falha ao sincronizar com a nuvem: {storageError}
+          </p>
+        )}
 
         {/* Scrollable Content Area */}
         <div className="p-4 h-[calc(100vh)-50px] overflow-y-auto custom-scrollbar">

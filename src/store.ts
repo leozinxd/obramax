@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppState, Obra, Tarefa, Compra, PagamentoCliente, DiarioObra, TicketAlteracao, TicketStatus, ItemChecadoDiario } from './types';
 import { sugerirCategoriaPorTitulo } from './constants/categorias';
+import { supabase } from './supabase';
 
 export type { AppState };
 
@@ -470,117 +471,179 @@ export function sincronizarRdoAutomaticoComTarefas(
   return diarioObra;
 }
 
-export function useStore() {
-  const [state, setState] = useState<AppState>(() => {
+function normalizeAppState(parsed: AppState): AppState {
+  if (Array.isArray(parsed.tarefas)) {
+    parsed.tarefas = parsed.tarefas.map(t => {
+      const dataInicioPrevista = t.dataInicioPrevista ||
+        new Date(new Date(t.dataFimPrevista).getTime() - (Math.max(1, t.duracaoDias || 1) - 1) * 86400000).toISOString().split('T')[0];
+      const temAtividade = t.status === 'CONCLUIDA' ||
+        Boolean(t.subtarefas && t.subtarefas.some(s => s.concluida)) ||
+        Boolean(t.fotosExecucao && t.fotosExecucao.length > 0);
+      const iniciada = t.iniciada !== undefined ? t.iniciada : temAtividade;
+      const dataInicioReal = t.dataInicioReal || (iniciada ? dataInicioPrevista : undefined);
+      const categoria = t.categoria || sugerirCategoriaPorTitulo(t.titulo);
+      const subtarefas = (t.subtarefas || []).map(st => ({
+        ...st,
+        categoria: st.categoria || categoria || sugerirCategoriaPorTitulo(st.titulo),
+        dataInicioPrevista: st.dataInicioPrevista || dataInicioPrevista,
+        dataFimPrevista: st.dataFimPrevista || t.dataFimPrevista,
+        iniciada: st.iniciada !== undefined ? st.iniciada : (st.concluida || iniciada),
+        fotosExecucao: st.fotosExecucao || []
+      }));
+
+      return {
+        ...t,
+        categoria,
+        fotosExecucao: Array.isArray(t.fotosExecucao) ? t.fotosExecucao : [],
+        dataInicioPrevista,
+        iniciada,
+        dataInicioReal,
+        subtarefas
+      };
+    });
+  }
+
+  if (Array.isArray(parsed.compras)) {
+    parsed.compras = parsed.compras.map(c => {
+      const categoria = c.categoria || 'Material';
+      const itens = (c.itens && c.itens.length > 0) ? c.itens.map((it: any) => ({
+        ...it,
+        tarefaId: it.tarefaId || c.tarefaId,
+        subtarefaId: it.subtarefaId || (it.tarefaId && it.tarefaId !== c.tarefaId ? undefined : c.subtarefaId)
+      })) : [{
+        id: generateId(),
+        item: c.nomeMaterial || 'Item sem descrição',
+        valorUnitario: c.valorTotal || 0,
+        quantidade: 1,
+        valorTotal: c.valorTotal || 0,
+        tarefaId: c.tarefaId,
+        subtarefaId: c.subtarefaId
+      }];
+      return { ...c, categoria, itens };
+    });
+  }
+
+  if (Array.isArray(parsed.diarioObra)) {
+    parsed.diarioObra = parsed.diarioObra.map(d => ({
+      ...d,
+      statusConfirmacao: d.statusConfirmacao || 'CONFIRMADO'
+    }));
+  }
+
+  const obraAtiva = parsed.obraAtivaId !== undefined ? parsed.obraAtivaId : (parsed.obras?.[0]?.id || null);
+  if (obraAtiva) {
+    parsed.diarioObra = sincronizarRdoAutomaticoComTarefas(parsed.diarioObra || [], parsed.tarefas || [], obraAtiva);
+  }
+  return parsed;
+}
+
+function createInitialState(): AppState {
+  return {
+    ...initialMockState,
+    diarioObra: sincronizarRdoAutomaticoComTarefas(
+      initialMockState.diarioObra,
+      initialMockState.tarefas,
+      initialMockState.obraAtivaId || 'obra-1'
+    )
+  };
+}
+
+function readLegacyState(): AppState | null {
+  try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as AppState;
-        // Normalização e retrocompatibilidade de tarefas e subtarefas
-        if (parsed.tarefas && Array.isArray(parsed.tarefas)) {
-          parsed.tarefas = parsed.tarefas.map(t => {
-            const dataInicioPrevista = t.dataInicioPrevista || 
-              new Date(new Date(t.dataFimPrevista).getTime() - (Math.max(1, t.duracaoDias || 1) - 1) * 86400000).toISOString().split('T')[0];
-            const temAtividade = t.status === 'CONCLUIDA' || 
-              Boolean(t.subtarefas && t.subtarefas.some(s => s.concluida)) || 
-              Boolean(t.fotosExecucao && t.fotosExecucao.length > 0);
-            const iniciada = t.iniciada !== undefined ? t.iniciada : temAtividade;
-            const dataInicioReal = t.dataInicioReal || (iniciada ? dataInicioPrevista : undefined);
+    return stored ? normalizeAppState(JSON.parse(stored) as AppState) : null;
+  } catch (error) {
+    console.error('Falha ao ler dados locais legados:', error);
+    return null;
+  }
+}
 
-            const categoria = t.categoria || sugerirCategoriaPorTitulo(t.titulo);
-            const subtarefas = (t.subtarefas || []).map(st => ({
-              ...st,
-              categoria: st.categoria || categoria || sugerirCategoriaPorTitulo(st.titulo),
-              dataInicioPrevista: st.dataInicioPrevista || dataInicioPrevista,
-              dataFimPrevista: st.dataFimPrevista || t.dataFimPrevista,
-              iniciada: st.iniciada !== undefined ? st.iniciada : (st.concluida || iniciada),
-              fotosExecucao: st.fotosExecucao || []
-            }));
+function clearLegacyState(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn('Não foi possível remover a cópia local já migrada:', error);
+  }
+}
 
-            return {
-              ...t,
-              categoria,
-              fotosExecucao: Array.isArray(t.fotosExecucao) ? t.fotosExecucao : [],
-              dataInicioPrevista,
-              iniciada,
-              dataInicioReal,
-              subtarefas
-            };
-          });
-        }
-
-        // Normalização e retrocompatibilidade de compras (categoria e itens)
-        if (parsed.compras && Array.isArray(parsed.compras)) {
-          parsed.compras = parsed.compras.map(c => {
-            const categoria = c.categoria || 'Material';
-            const itens = (c.itens && c.itens.length > 0) ? c.itens.map((it: any) => ({
-              ...it,
-              tarefaId: it.tarefaId || c.tarefaId,
-              subtarefaId: it.subtarefaId || (it.tarefaId && it.tarefaId !== c.tarefaId ? undefined : c.subtarefaId)
-            })) : [
-              {
-                id: generateId(),
-                item: c.nomeMaterial || 'Item sem descrição',
-                valorUnitario: c.valorTotal || 0,
-                quantidade: 1,
-                valorTotal: c.valorTotal || 0,
-                tarefaId: c.tarefaId,
-                subtarefaId: c.subtarefaId
-              }
-            ];
-            return {
-              ...c,
-              categoria,
-              itens
-            };
-          });
-        }
-
-        // Normalização e retrocompatibilidade de RDOs
-        if (parsed.diarioObra && Array.isArray(parsed.diarioObra)) {
-          parsed.diarioObra = parsed.diarioObra.map(d => ({
-            ...d,
-            statusConfirmacao: d.statusConfirmacao || 'CONFIRMADO'
-          }));
-        }
-
-        const obraAtiva = parsed.obraAtivaId !== undefined ? parsed.obraAtivaId : (parsed.obras?.[0]?.id || null);
-        if (obraAtiva) {
-          parsed.diarioObra = sincronizarRdoAutomaticoComTarefas(parsed.diarioObra || [], parsed.tarefas || [], obraAtiva);
-        }
-
-        return parsed;
-      } catch (e) {
-        console.error("Failed to parse stored state", e);
-      }
-    }
-    const initialWithRdo = {
-      ...initialMockState,
-      diarioObra: sincronizarRdoAutomaticoComTarefas(initialMockState.diarioObra, initialMockState.tarefas, initialMockState.obraAtivaId || 'obra-1')
-    };
-    return initialWithRdo;
-  });
+export function useStore(userId: string | null) {
+  const [state, setState] = useState<AppState>(createInitialState);
+  const [isLoading, setIsLoading] = useState(Boolean(userId));
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
+  const saveQueue = useRef(Promise.resolve());
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch (err) {
-      console.warn("Aviso ao salvar no localStorage (cota de armazenamento atingida):", err);
-      try {
-        // Se a cota do navegador for ultrapassada, salva versão otimizada
-        const backupState: AppState = {
-          ...state,
-          diarioObra: state.diarioObra.map(d => ({
-            ...d,
-            fotosDia: (d.fotosDia || []).slice(-4)
-          }))
-        };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(backupState));
-      } catch (innerErr) {
-        console.error("Não foi possível persistir no localStorage:", innerErr);
-      }
+    if (!userId || !supabase) {
+      setIsLoading(false);
+      setLoadedUserId(null);
+      return;
     }
-  }, [state]);
+
+    let isCurrent = true;
+    setIsLoading(true);
+    setStorageError(null);
+    setLoadedUserId(null);
+
+    const loadState = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_state')
+          .select('state')
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (error) throw error;
+
+        let nextState: AppState;
+        if (data?.state) {
+          nextState = normalizeAppState(data.state as AppState);
+        } else {
+          nextState = readLegacyState() || createInitialState();
+          const { error: saveError } = await supabase
+            .from('app_state')
+            .upsert({ user_id: userId, state: nextState });
+          if (saveError) throw saveError;
+        }
+
+        if (!isCurrent) return;
+        setState(nextState);
+        setLoadedUserId(userId);
+        setIsLoading(false);
+        clearLegacyState();
+      } catch (error) {
+        if (!isCurrent) return;
+        setStorageError(error instanceof Error ? error.message : 'Não foi possível carregar os dados da nuvem.');
+        setIsLoading(false);
+      }
+    };
+
+    void loadState();
+    return () => {
+      isCurrent = false;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId || loadedUserId !== userId || !supabase) return;
+
+    const saveTimer = window.setTimeout(() => {
+      const snapshot = state;
+      saveQueue.current = saveQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          const { error } = await supabase
+            .from('app_state')
+            .upsert({ user_id: userId, state: snapshot, updated_at: new Date().toISOString() });
+          if (error) throw error;
+          setStorageError(null);
+        })
+        .catch(error => {
+          setStorageError(error instanceof Error ? error.message : 'Não foi possível salvar os dados na nuvem.');
+        });
+    }, 400);
+
+    return () => window.clearTimeout(saveTimer);
+  }, [state, userId, loadedUserId]);
 
   const setObraAtiva = useCallback((id: string | null) => {
     setState(s => {
@@ -1006,6 +1069,9 @@ function aplicarChecksNasTarefas(
 
   return {
     state,
+    isLoading,
+    isReady: loadedUserId === userId,
+    storageError,
     setObraAtiva,
     addObra,
     updateObra,
